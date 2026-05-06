@@ -110,18 +110,31 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
                 {tenant.previousDues > 0 && (
                   <tr className="text-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
                     <td className="px-8 py-6">
-                      <p className="font-bold tracking-wide" style={{ color: '#f87171' }}>Arrears / Previous Dues</p>
+                      <p className="font-bold tracking-wide" style={{ color: '#f87171' }}>Arrears / Opening Balance</p>
+                      <p className="text-[12px] mt-1 uppercase tracking-tight font-black" style={{ color: '#fca5a5' }}>Brought forward from previous month</p>
                     </td>
                     <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#fca5a5' }}>Accumulated</td>
                     <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#f87171' }}>{formatCurrency(tenant.previousDues)}</td>
                   </tr>
                 )}
+                {(tenant.paidAmount || 0) > 0 && (
+                  <tr className="text-lg" style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
+                    <td className="px-8 py-6">
+                      <p className="font-bold tracking-wide" style={{ color: '#34d399' }}>Payments Received</p>
+                      <p className="text-[12px] mt-1 uppercase tracking-tight font-black" style={{ color: '#6ee7b7' }}>Credits applied to this period</p>
+                    </td>
+                    <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#6ee7b7' }}>-</td>
+                    <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#34d399' }}>-{formatCurrency(tenant.paidAmount || 0)}</td>
+                  </tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="border-t" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', borderColor: 'rgba(59, 130, 246, 0.2)' }}>
-                  <td className="px-8 py-8 font-black text-3xl uppercase tracking-tighter" style={{ color: '#ffffff' }} colSpan={2}>Aggregate Payable</td>
+                  <td className="px-8 py-8 font-black text-3xl uppercase tracking-tighter" style={{ color: '#ffffff' }} colSpan={2}>
+                    { (totalDue - (tenant.paidAmount || 0)) <= 0 ? 'Fully Settled' : 'Net Payable' }
+                  </td>
                   <td className="px-8 py-8 text-right font-mono font-black text-5xl shadow-[0_0_20px_rgba(37,99,235,0.2)]" style={{ color: '#60a5fa' }}>
-                    {formatCurrency(totalDue)}
+                    {formatCurrency(Math.max(0, totalDue - (tenant.paidAmount || 0)))}
                   </td>
                 </tr>
               </tfoot>

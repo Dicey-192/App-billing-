@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot } from '../types';
-import { generateId, cn } from '../lib/utils';
+import { generateId, cn, formatCurrency } from '../lib/utils';
 import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -814,7 +814,12 @@ export const HistoryDetailModal: React.FC<{
             const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
             const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
             const totalExtra = t.expenses.reduce((acc: number, exp: any) => acc + exp.amount, 0);
-            const totalDue = t.rent + (elecUnits * p.electricRate) + (waterUnits * p.waterRate) + totalExtra + t.previousDues;
+            
+            // Core Logic: totalDue in history should use openingBalance if it exists, otherwise fallback to previousDues
+            const opening = t.openingBalance || t.previousDues || 0;
+            const currentCharges = t.rent + (elecUnits * p.electricRate) + (waterUnits * p.waterRate) + totalExtra;
+            const totalDue = currentCharges + opening;
+            
             const paid = t.paidAmount || (t.isPaid ? totalDue : 0);
             const balance = totalDue - paid;
 
@@ -826,21 +831,33 @@ export const HistoryDetailModal: React.FC<{
                 )}>
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-lg text-white">{t.name}</span>
-                        <span className="px-2 py-0.5 bg-slate-800 rounded text-[9px] font-mono text-slate-500">RM {t.roomNumber}</span>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-lg text-white">{t.name}</span>
+                          <span className="px-2 py-0.5 bg-slate-800 rounded text-[9px] font-mono text-slate-500">RM {t.roomNumber}</span>
+                        </div>
+                        {opening > 0 && (
+                          <div className="flex items-center gap-1 text-[9px] font-black text-rose-400 uppercase tracking-widest bg-rose-500/10 px-2 py-1 rounded-lg border border-rose-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            Arrears Brought Forward: {formatCurrency(opening)}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex gap-4 mt-2">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
                         <div>
-                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Bill Amount</p>
+                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Current Bill</p>
+                          <p className="text-sm font-bold text-white font-mono">₹{currentCharges.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Total Due</p>
                           <p className="text-sm font-bold text-white font-mono">₹{totalDue.toLocaleString()}</p>
                         </div>
                         <div>
-                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Paid So Far</p>
+                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Paid Amount</p>
                           <p className="text-sm font-bold text-emerald-400 font-mono">₹{paid.toLocaleString()}</p>
                         </div>
                         <div>
-                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Balance</p>
+                          <p className="text-[9px] uppercase tracking-widest font-black text-slate-600 mb-0.5">Outstanding</p>
                           <p className={cn("text-sm font-bold font-mono", balance > 0 ? "text-rose-400" : "text-emerald-500")}>
                             ₹{balance.toLocaleString()}
                           </p>

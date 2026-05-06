@@ -8,7 +8,7 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import html2canvas from 'html2canvas';
@@ -19,7 +19,7 @@ import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, Roll
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
-  const { data, properties, tenants, history, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData } = useStorage();
+  const { data, properties, tenants, history, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances } = useStorage();
 
   // Modals state
   const [propertyModal, setPropertyModal] = useState<{ open: boolean; data?: Property }>({ open: false });
@@ -148,14 +148,17 @@ export default function App() {
         const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
         const totalDue = t.rent + elecAmount + waterAmount + totalExtra + t.previousDues;
         
-        const remainingDues = t.isPaid ? 0 : totalDue;
+        const paid = t.paidAmount || 0;
+        const remainingDues = Math.max(0, totalDue - paid);
 
         const updates = {
           prevElecReading: t.currElecReading, // current month's reading becomes starting for next month
           currElecReading: 0, // reset to 0 as requested
           prevWaterReading: t.currWaterReading,
           currWaterReading: 0, // reset to 0 as requested
-          isPaid: false,
+          isPaid: remainingDues <= 0,
+          paidAmount: 0,
+          payments: [],
           previousDues: remainingDues,
           updatedAt: Date.now(),
         };
@@ -388,7 +391,7 @@ export default function App() {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="flex-1"
           >
-            {currentView === 'dashboard' && <DashboardView data={data} setBatchModal={setBatchModal} setBulkTableModal={setBulkTableModal} />}
+            {currentView === 'dashboard' && <DashboardView data={data} setBatchModal={setBatchModal} setBulkTableModal={setBulkTableModal} properties={properties} />}
             {currentView === 'properties' && (
               <PropertiesView 
                 properties={properties} 
@@ -435,6 +438,7 @@ export default function App() {
                 quotaUsage={quotaUsage} 
                 cleanOldHistory={cleanOldHistory}
                 dataStats={dataStats}
+                recalculateBalances={recalculateBalances}
               />
             )}
             {currentView === 'history' && (
@@ -580,17 +584,36 @@ export default function App() {
   );
 }
 
-function DashboardView({ data, setBatchModal, setBulkTableModal }: { data: AppData; setBatchModal: any; setBulkTableModal: any }) {
+function DashboardView({ data, setBatchModal, setBulkTableModal, properties }: { data: AppData; setBatchModal: any; setBulkTableModal: any; properties: Property[] }) {
   const stats = useMemo(() => {
-    const totalRent = data.tenants.reduce((acc, t) => acc + t.rent, 0);
+    let totalPotential = 0;
+    let totalCollected = 0;
+    let totalArrears = 0;
+
+    data.tenants.forEach(t => {
+      const prop = properties.find(p => p.id === t.propertyId);
+      if (!prop) return;
+
+      const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
+      const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
+      const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
+      
+      const openingBalance = t.previousDues || 0;
+      const monthlyDue = t.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra;
+      const totalDue = monthlyDue + openingBalance;
+      const paid = t.paidAmount || 0;
+
+      totalPotential += totalDue;
+      totalCollected += paid;
+      totalArrears += openingBalance;
+    });
+
+    const pendingRevenue = totalPotential - totalCollected;
     const paidCount = data.tenants.filter(t => t.isPaid).length;
     const totalCount = data.tenants.length;
-    
-    const paidRevenue = data.tenants.filter(t => t.isPaid).reduce((acc, t) => acc + t.rent, 0);
-    const pendingRevenue = totalRent - paidRevenue;
 
-    return { totalRent, paidCount, totalCount, paidRevenue, pendingRevenue };
-  }, [data.tenants]);
+    return { totalPotential, totalCollected, pendingRevenue, totalCount, paidCount, totalArrears };
+  }, [data.tenants, properties]);
 
   const container = {
     hidden: { opacity: 0 },
@@ -616,14 +639,14 @@ function DashboardView({ data, setBatchModal, setBulkTableModal }: { data: AppDa
     >
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Potential', value: formatCurrency(stats.totalRent), color: 'text-white' },
-          { label: 'Collected', value: formatCurrency(stats.paidRevenue), color: 'text-emerald-400' },
-          { label: 'Pending', value: formatCurrency(stats.pendingRevenue), color: 'text-rose-400' },
+          { label: 'Portfolio Value', value: formatCurrency(stats.totalPotential), color: 'text-white' },
+          { label: 'Collected', value: formatCurrency(stats.totalCollected), color: 'text-emerald-400' },
+          { label: 'Total Pending', value: formatCurrency(stats.pendingRevenue), color: 'text-rose-400' },
           { 
-            label: 'Tenants Status', 
+            label: 'Cycle Status', 
             value: `${stats.paidCount} / ${stats.totalCount}`, 
             color: 'text-white',
-            badge: 'Active ↑' 
+            badge: stats.totalArrears > 0 ? `₹${stats.totalArrears.toLocaleString()} Arrears` : 'Clean Slate ↑' 
           }
         ].map((s, idx) => (
           <motion.div key={idx} variants={item} className="p-6 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md hover:bg-white/[0.08] transition-colors group cursor-default">
@@ -1172,7 +1195,7 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
   );
 }
 
-function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats }: any) {
+function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances }: any) {
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1247,13 +1270,18 @@ function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStat
 
           <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-emerald-500/20 transition-all group">
             <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-               <CheckCircle2 className="w-5 h-5" />
+               <ArrowDownUp className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-white">2 Year Deep Keep</h4>
-              <p className="text-[10px] text-slate-500 mt-1">Maintains history for 24 months. Recommended for stable portfolios.</p>
+              <h4 className="text-sm font-bold text-white">Full Balance Audit</h4>
+              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter">Recalculate all arrears and opening balances across history.</p>
             </div>
-            <button onClick={() => confirm('Prune records older than 24 months?') && cleanOldHistory(24)} className="w-full py-2 bg-emerald-500/10 text-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all">Prune (2yr)</button>
+            <button onClick={() => {
+              if (confirm('Run full accounting audit? This will recalculate all opening balances based on payment history.')) {
+                recalculateBalances();
+                alert('Audit complete! All balances synchronized.');
+              }
+            }} className="w-full py-2 bg-emerald-500/10 text-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all">Recalculate All</button>
           </div>
         </div>
       </section>

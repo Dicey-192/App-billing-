@@ -142,24 +142,87 @@ export function useStorage() {
     setData(prev => ({ ...prev, dismissedMonth: month }));
   }, []);
 
-  const updateHistoryTenant = useCallback((entryId: string, tenantId: string, updates: Partial<any>) => {
-    setData(prev => ({
-      ...prev,
-      history: prev.history.map(h => {
-        if (h.id !== entryId) return h;
+  const recalculateBalances = useCallback(() => {
+    setData(prev => {
+      const newHistory = [...prev.history].sort((a, b) => a.createdAt - b.createdAt);
+      const newTenants = [...prev.tenants];
+      
+      // Track running balance per tenant
+      const tenantBalances = new Map<string, number>();
+
+      const processedHistory = newHistory.map(entry => {
+        const prop = prev.properties.find(p => p.id === entry.propertyId);
+        if (!prop) return entry;
+
+        const updatedTenants = entry.snapshot.tenants.map(t => {
+          const openingBalance = tenantBalances.get(t.id) || 0;
+          
+          const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
+          const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
+          const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
+          
+          const totalDue = (openingBalance || 0) + t.rent + 
+                          (elecUnits * prop.electricRate) + 
+                          (waterUnits * prop.waterRate) + totalExtra;
+          
+          const paid = t.paidAmount || 0;
+          const remaining = totalDue - paid;
+          
+          tenantBalances.set(t.id, Math.max(0, remaining));
+
+          return { 
+            ...t, 
+            openingBalance, 
+            previousDues: openingBalance // In history, we store what was the 'previous dues' at the start
+          };
+        });
+
         return {
-          ...h,
+          ...entry,
           snapshot: {
-            ...h.snapshot,
-            tenants: h.snapshot.tenants.map(t => {
-              if (t.id !== tenantId) return t;
-              return { ...t, ...updates };
-            })
+            ...entry.snapshot,
+            tenants: updatedTenants
           }
         };
-      })
-    }));
+      });
+
+      // Update current tenants with final balances
+      const finalTenants = newTenants.map(t => ({
+        ...t,
+        previousDues: tenantBalances.get(t.id) || 0
+      }));
+
+      return {
+        ...prev,
+        history: processedHistory.sort((a, b) => b.createdAt - a.createdAt), // Restore original order
+        tenants: finalTenants
+      };
+    });
   }, []);
+
+  const updateHistoryTenant = useCallback((entryId: string, tenantId: string, updates: Partial<any>) => {
+    setData(prev => {
+      const next = {
+        ...prev,
+        history: prev.history.map(h => {
+          if (h.id !== entryId) return h;
+          return {
+            ...h,
+            snapshot: {
+              ...h.snapshot,
+              tenants: h.snapshot.tenants.map(t => {
+                if (t.id !== tenantId) return t;
+                return { ...t, ...updates };
+              })
+            }
+          };
+        })
+      };
+      return next;
+    });
+    // Trigger ripple effect
+    recalculateBalances();
+  }, [recalculateBalances]);
 
   const cleanOldHistory = useCallback((monthsToKeep: number = 12) => {
     setData(prev => {
@@ -201,6 +264,7 @@ export function useStorage() {
     updateHistoryTenant,
     cleanOldHistory,
     restoreData,
+    recalculateBalances,
     setData,
-  }), [data, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData]);
+  }), [data, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances]);
 }
