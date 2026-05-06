@@ -27,19 +27,32 @@ export interface Tenant {
   currElecReading: number;
   prevWaterReading: number;
   currWaterReading: number;
+  whatsappNumber?: string;
   isPaid: boolean;
+  paidAmount?: number;
+  payments?: PaymentRecord[];
   expenses: ExpenseItem[];
   moveInDate?: string;
   updatedAt: number;
 }
 
+export interface PaymentRecord {
+  id: string;
+  amount: number;
+  date: number;
+  note?: string;
+}
+
+export interface HistoryTenantSnapshot extends Tenant {
+}
+
 export interface BillHistoryEntry {
   id: string;
   propertyId: string;
-  month: string; // YYYY-MM
+  month: string; // "Month Year" e.g. "May 2026"
   snapshot: {
     property: Property;
-    tenants: Tenant[];
+    tenants: HistoryTenantSnapshot[];
   };
   createdAt: number;
 }
@@ -49,4 +62,6 @@ export interface AppData {
   tenants: Tenant[];
   history: BillHistoryEntry[];
   activeMonth?: string;
+  dismissedMonth?: string;
+  lastBackupAt?: number;
 }

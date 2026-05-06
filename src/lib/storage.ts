@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { AppData, Property, Tenant, BillHistoryEntry } from '../types';
 
 const STORAGE_KEY = 'artha_billing_data';
@@ -23,54 +23,68 @@ export function useStorage() {
   });
 
   const [quotaUsage, setQuotaUsage] = useState(0);
+  const [dataStats, setDataStats] = useState({ properties: 0, tenants: 0, history: 0 });
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    
-    // Estimate quota usage (5MB is standard for localStorage)
     const stringified = JSON.stringify(data);
+    localStorage.setItem(STORAGE_KEY, stringified);
+    
+    // Detailed Stats
+    const stats = {
+      properties: new Blob([JSON.stringify(data.properties)]).size,
+      tenants: new Blob([JSON.stringify(data.tenants)]).size,
+      history: new Blob([JSON.stringify(data.history)]).size,
+    };
+    setDataStats(stats);
+
     const sizeInBytes = new Blob([stringified]).size;
     setQuotaUsage((sizeInBytes / (5 * 1024 * 1024)) * 100);
   }, [data]);
 
-  const addProperty = (property: Property) => {
-    setData(prev => ({
-      ...prev,
-      properties: [...prev.properties, property],
-    }));
-  };
+  const addProperty = useCallback((property: Property) => {
+    setData(prev => {
+      if (prev.properties.length >= 2) {
+        alert('Property limit reached! Maximum 2 properties allowed.');
+        return prev;
+      }
+      return {
+        ...prev,
+        properties: [...prev.properties, property],
+      };
+    });
+  }, []);
 
-  const updateProperty = (id: string, property: Partial<Property>) => {
+  const updateProperty = useCallback((id: string, property: Partial<Property>) => {
     setData(prev => ({
       ...prev,
       properties: prev.properties.map(p => p.id === id ? { ...p, ...property, updatedAt: Date.now() } : p),
     }));
-  };
+  }, []);
 
-  const deleteProperty = (id: string) => {
+  const deleteProperty = useCallback((id: string) => {
     setData(prev => ({
       ...prev,
       properties: prev.properties.filter(p => p.id !== id),
       tenants: prev.tenants.filter(t => t.propertyId !== id),
       history: prev.history.filter(h => h.propertyId !== id),
     }));
-  };
+  }, []);
 
-  const addTenant = (tenant: Tenant) => {
+  const addTenant = useCallback((tenant: Tenant) => {
     setData(prev => ({
       ...prev,
       tenants: [...prev.tenants, tenant],
     }));
-  };
+  }, []);
 
-  const updateTenant = (id: string, tenant: Partial<Tenant>) => {
+  const updateTenant = useCallback((id: string, tenant: Partial<Tenant>) => {
     setData(prev => ({
       ...prev,
       tenants: prev.tenants.map(t => t.id === id ? { ...t, ...tenant, updatedAt: Date.now() } : t),
     }));
-  };
+  }, []);
 
-  const updateTenants = (updates: { id: string; updates: Partial<Tenant> }[]) => {
+  const updateTenants = useCallback((updates: { id: string; updates: Partial<Tenant> }[]) => {
     setData(prev => {
       const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
       return {
@@ -81,35 +95,36 @@ export function useStorage() {
         }),
       };
     });
-  };
+  }, []);
 
-  const deleteTenant = (id: string) => {
+  const deleteTenant = useCallback((id: string) => {
     setData(prev => ({
       ...prev,
       tenants: prev.tenants.filter(t => t.id !== id),
     }));
-  };
+  }, []);
 
-  const addHistory = (entry: BillHistoryEntry) => {
+  const addHistory = useCallback((entry: BillHistoryEntry) => {
     setData(prev => ({
       ...prev,
       history: [entry, ...prev.history],
     }));
-  };
+  }, []);
 
-  const addManyHistory = (entries: BillHistoryEntry[]) => {
+  const addManyHistory = useCallback((entries: BillHistoryEntry[]) => {
     setData(prev => ({
       ...prev,
       history: [...entries, ...prev.history],
     }));
-  };
+  }, []);
 
-  const rollover = (month: string, historyEntries: BillHistoryEntry[], updates: { id: string; updates: Partial<Tenant> }[]) => {
+  const rollover = useCallback((month: string, historyEntries: BillHistoryEntry[], updates: { id: string; updates: Partial<Tenant> }[]) => {
     setData(prev => {
       const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
       return {
         ...prev,
         activeMonth: month,
+        dismissedMonth: undefined,
         history: [...historyEntries, ...prev.history],
         tenants: prev.tenants.map(t => {
           const u = tenantMap.get(t.id);
@@ -117,19 +132,57 @@ export function useStorage() {
         }),
       };
     });
-  };
+  }, []);
 
-  const setActiveMonth = (month: string) => {
-    setData(prev => ({ ...prev, activeMonth: month }));
-  };
+  const setActiveMonth = useCallback((month: string) => {
+    setData(prev => ({ ...prev, activeMonth: month, dismissedMonth: undefined }));
+  }, []);
 
-  const restoreData = (newData: AppData) => {
-    setData(newData);
-  };
+  const dismissRollover = useCallback((month: string) => {
+    setData(prev => ({ ...prev, dismissedMonth: month }));
+  }, []);
 
-  return {
+  const updateHistoryTenant = useCallback((entryId: string, tenantId: string, updates: Partial<any>) => {
+    setData(prev => ({
+      ...prev,
+      history: prev.history.map(h => {
+        if (h.id !== entryId) return h;
+        return {
+          ...h,
+          snapshot: {
+            ...h.snapshot,
+            tenants: h.snapshot.tenants.map(t => {
+              if (t.id !== tenantId) return t;
+              return { ...t, ...updates };
+            })
+          }
+        };
+      })
+    }));
+  }, []);
+
+  const cleanOldHistory = useCallback((monthsToKeep: number = 12) => {
+    setData(prev => {
+      const now = Date.now();
+      const cutoff = now - (monthsToKeep * 30 * 24 * 60 * 60 * 1000);
+      return {
+        ...prev,
+        history: prev.history.filter(h => h.createdAt > cutoff),
+      };
+    });
+  }, []);
+
+  const restoreData = useCallback((newData: AppData) => {
+    setData({
+      ...newData,
+      lastBackupAt: Date.now()
+    });
+  }, []);
+
+  return useMemo(() => ({
     data,
     quotaUsage,
+    dataStats,
     properties: data.properties,
     tenants: data.tenants,
     history: data.history,
@@ -144,6 +197,10 @@ export function useStorage() {
     addManyHistory,
     rollover,
     setActiveMonth,
+    dismissRollover,
+    updateHistoryTenant,
+    cleanOldHistory,
     restoreData,
-  };
+    setData,
+  }), [data, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData]);
 }
