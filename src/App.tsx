@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
-import { formatCurrency, generateId, cn } from './lib/utils';
+import { formatCurrency, generateId, cn, getTenantBillingDetails } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
 import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -230,13 +230,14 @@ const safeHtml2Canvas = async (element: HTMLElement, options: any) => {
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
-import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal } from './components/Modals';
+import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal } from './components/Modals';
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs } = useStorage();
 
   // Modals state
+  const [profileModal, setProfileModal] = useState<{ open: boolean; tenant?: Tenant; property?: Property }>({ open: false });
   const [propertyModal, setPropertyModal] = useState<{ open: boolean; data?: Property }>({ open: false });
   const [tenantModal, setTenantModal] = useState<{ open: boolean; data?: Tenant; propertyId?: string }>({ open: false });
   const [paymentModal, setPaymentModal] = useState<{ open: boolean; tenant?: Tenant; property?: Property }>({ open: false });
@@ -686,6 +687,8 @@ export default function App() {
                 bulkProgress={bulkProgress}
                 processingId={processingId}
                 setProcessingId={setProcessingId}
+                onOpenProfile={(tenant, property) => setProfileModal({ open: true, tenant, property })}
+                recalculateBalances={recalculateBalances}
               />
             )}
             {currentView === 'settings' && (
@@ -726,6 +729,34 @@ export default function App() {
       </div>
 
       {/* Modals */}
+      {profileModal.open && profileModal.tenant && profileModal.property && (
+        <TenantProfileModal 
+          isOpen={profileModal.open}
+          onClose={() => setProfileModal({ open: false })}
+          tenant={profileModal.tenant}
+          property={profileModal.property}
+          history={history}
+          onSaveBillEdit={(tenantId, overrides) => {
+            pushToUndo();
+            updateTenant(tenantId, { manualOverrides: overrides });
+            // Immediate UI feedback within the open profile modal
+            setProfileModal(prev => {
+              if (prev.tenant && prev.tenant.id === tenantId) {
+                return {
+                  ...prev,
+                  tenant: {
+                    ...prev.tenant,
+                    manualOverrides: overrides
+                  }
+                };
+              }
+              return prev;
+            });
+          }}
+          onOpenHistoryDetail={(entry) => setHistoryModal({ open: true, data: entry })}
+        />
+      )}
+
       <PropertyModal 
         isOpen={propertyModal.open} 
         onClose={() => setPropertyModal({ open: false })}
@@ -1009,7 +1040,7 @@ function PropertiesView({ properties, addProperty, updateProperty, deletePropert
   );
 }
 
-function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId }: any) {
+function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances }: any) {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   
   const toggleSelection = (id: string) => {
@@ -1091,8 +1122,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row gap-4 glass-panel p-4 rounded-2xl">
-        <div className="relative flex-1">
+      <div className="flex flex-col md:flex-row gap-4 glass-panel p-4 rounded-2xl items-center">
+        <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input 
             type="text" 
@@ -1102,9 +1133,9 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap md:flex-nowrap gap-2 w-full md:w-auto items-center">
           <select 
-            className="input w-auto min-w-[160px] bg-slate-900/50"
+            className="input w-full md:w-auto min-w-[160px] bg-slate-900/50"
             value={selectedPropertyId}
             onChange={(e) => setSelectedPropertyId(e.target.value)}
           >
@@ -1112,7 +1143,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             {properties.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <select 
-            className="input w-auto min-w-[140px] bg-slate-900/50"
+            className="input w-full md:w-auto min-w-[140px] bg-slate-900/50"
             value={statusFilter}
             onChange={(e: any) => setStatusFilter(e.target.value)}
           >
@@ -1120,6 +1151,17 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             <option value="paid">Paid</option>
             <option value="unpaid">Unpaid</option>
           </select>
+          <button
+            onClick={() => {
+              recalculateBalances();
+              alert('Arrears Recalculation Triggered: Auto-sync completed and remaining balances recalculated downstream.');
+            }}
+            className="w-full md:w-auto px-4 py-2 border border-blue-500/20 bg-blue-500/10 hover:bg-blue-500/20 text-[10px] font-black uppercase tracking-wider text-blue-400 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 h-10"
+            title="Force synchronization with past months' payments and arrears carry-overs"
+          >
+            <ArrowDownUp className="w-3.5 h-3.5" />
+            Sync Now
+          </button>
         </div>
       </div>
 
@@ -1181,7 +1223,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                     onChange={toggleAll}
                    />
                 </th>
-                <th className="px-6 py-4 font-bold">Tenant Details</th>
+                <th className="px-6 py-4 font-bold">Tenant Details (Click to Edit/View Profile)</th>
                 <th className="px-6 py-4 font-bold text-right">Meter Status (E/W)</th>
                 <th className="px-6 py-4 font-bold text-center">Payment</th>
                 <th className="px-6 py-4 font-bold text-right">Total Due</th>
@@ -1191,10 +1233,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             <tbody className="divide-y divide-white/5">
               {tenants.map((t: any) => {
                 const prop = properties.find((p: any) => p.id === t.propertyId)!;
-                const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-                const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-                const totalExtra = t.expenses.reduce((acc: number, exp: any) => acc + exp.amount, 0);
-                const totalDue = t.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra + t.previousDues;
+                const detail = getTenantBillingDetails(t, prop);
+                const totalDue = detail.totalDue;
 
                 return (
                   <tr key={t.id} className={cn(
@@ -1210,8 +1250,15 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         onChange={() => toggleSelection(t.id)}
                        />
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="font-bold text-white">{t.name}</div>
+                    <td 
+                      className="px-6 py-4 cursor-pointer hover:bg-white/10 transition-all rounded-r-xl"
+                      onClick={() => onOpenProfile(t, prop)}
+                      title="Open Tenant Profile Dossier & Arrears"
+                    >
+                      <div className="font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
+                        {t.name}
+                        <ArrowDownUp className="w-3.5 h-3.5 text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                       <div className="text-[10px] text-slate-500 uppercase tracking-tight">Room {t.roomNumber} • {prop.name}</div>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -1229,9 +1276,9 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                           updateTenant(t.id, { isPaid: !t.isPaid });
                         }}
                         className={cn(
-                          "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-tighter border transition-all",
+                          "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-tighter border transition-all cursor-pointer",
                           t.isPaid 
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 animate-pulse" 
                             : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                         )}
                       >
@@ -1240,9 +1287,9 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="font-bold text-white tracking-wide">{formatCurrency(totalDue)}</div>
-                      {t.paidAmount && t.paidAmount > 0 && t.paidAmount < totalDue && (
+                      {detail.paidAmount > 0 && detail.outstandingBalance > 0 && (
                         <div className="text-[9px] text-rose-400 font-bold uppercase tracking-tighter">
-                          Bal: {formatCurrency(totalDue - t.paidAmount)}
+                          Bal: {formatCurrency(detail.outstandingBalance)}
                         </div>
                       )}
                     </td>
@@ -1279,9 +1326,9 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                            )}
                          </button>
                          <button 
-                          onClick={() => setTenantModal({ open: true, data: t, propertyId: t.propertyId })}
-                          className="p-1.5 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white"
-                          title="Edit"
+                          onClick={() => onOpenProfile(t, prop)}
+                          className="p-1.5 hover:bg-white/10 rounded-lg text-blue-400"
+                          title="Manage Overrides & Ledger"
                          >
                            <Edit2 className="w-4 h-4" />
                          </button>
@@ -1305,10 +1352,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
         <div className="md:hidden divide-y divide-white/5">
            {tenants.map((t: any) => {
              const prop = properties.find((p: any) => p.id === t.propertyId)!;
-             const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-             const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-             const totalExtra = t.expenses.reduce((acc: number, exp: any) => acc + exp.amount, 0);
-             const totalDue = t.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra + t.previousDues;
+             const detail = getTenantBillingDetails(t, prop);
+             const totalDue = detail.totalDue;
 
              return (
                <div key={t.id} className={cn(
@@ -1323,7 +1368,11 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                          checked={selectedTenantIds.has(t.id)}
                          onChange={() => toggleSelection(t.id)}
                         />
-                        <div>
+                        <div 
+                          className="cursor-pointer hover:text-blue-400 transition-all"
+                          onClick={() => onOpenProfile(t, prop)}
+                          title="View Tenant Dossier"
+                        >
                           <div className="font-bold text-white text-base">{t.name}</div>
                           <div className="text-[10px] text-slate-500 uppercase tracking-tight">Room {t.roomNumber} • {prop.name}</div>
                         </div>
@@ -1359,9 +1408,9 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                            <CreditCard className="w-5 h-5" />
                         </button>
                         <button 
-                          disabled={processingId === t.id}
-                          onClick={() => downloadReceipt(t)} 
-                          className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white disabled:opacity-50"
+                           disabled={processingId === t.id}
+                           onClick={() => downloadReceipt(t)} 
+                           className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white disabled:opacity-50"
                         >
                            {processingId === t.id ? (
                              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -1371,7 +1420,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         </button>
                      </div>
                      <div className="flex gap-1">
-                        <button onClick={() => setTenantModal({ open: true, data: t, propertyId: t.propertyId })} className="p-2.5 hover:bg-white/10 rounded-xl text-slate-500">
+                        <button onClick={() => onOpenProfile(t, prop)} className="p-2.5 hover:bg-white/10 rounded-xl text-blue-400" title="Manage Overrides & Ledger">
                            <Edit2 className="w-5 h-5" />
                         </button>
                         <button onClick={() => deleteTenant(t.id)} className="p-2.5 hover:bg-rose-500/10 rounded-xl text-slate-500 hover:text-rose-400">
@@ -1401,10 +1450,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
               <p className="text-sm font-bold text-white tracking-widest">
                 {formatCurrency(tenants.reduce((acc: number, t: any) => {
                    const prop = properties.find((p: any) => p.id === t.propertyId)!;
-                   const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-                   const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-                   const totalExtra = t.expenses.reduce((exAcc: number, exp: any) => exAcc + exp.amount, 0);
-                   return acc + t.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra + t.previousDues;
+                   const detail = getTenantBillingDetails(t, prop);
+                   return acc + detail.totalDue;
                 }, 0))}
               </p>
            </div>

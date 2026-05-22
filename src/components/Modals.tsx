@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot } from '../types';
-import { generateId, cn, formatCurrency } from '../lib/utils';
+import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot, ManualOverrides } from '../types';
+import { generateId, cn, formatCurrency, getTenantBillingDetails } from '../lib/utils';
 import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -1110,6 +1110,268 @@ export const HistoryDetailModal: React.FC<{
               </div>
             );
           })}
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+export const TenantProfileModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  tenant: Tenant;
+  property: Property;
+  history: any[];
+  onSaveBillEdit: (tenantId: string, overrides: Partial<ManualOverrides>) => void;
+  onOpenHistoryDetail: (entry: any) => void;
+}> = ({ isOpen, onClose, tenant, property, history, onSaveBillEdit, onOpenHistoryDetail }) => {
+  const billing = getTenantBillingDetails(tenant, property);
+  
+  const [isEditing, setIsEditing] = useState(false);
+  const [baseRent, setBaseRent] = useState(billing.baseRent);
+  const [elecCharges, setElecCharges] = useState(billing.electricityCharges);
+  const [waterCharges, setWaterCharges] = useState(billing.waterCharges);
+  const [otherFees, setOtherFees] = useState(billing.otherFees);
+  const [openingBalance, setOpeningBalance] = useState(billing.openingBalance);
+
+  // Sync state with tenant details when tenant changes or modal is opened
+  useEffect(() => {
+    setBaseRent(billing.baseRent);
+    setElecCharges(billing.electricityCharges);
+    setWaterCharges(billing.waterCharges);
+    setOtherFees(billing.otherFees);
+    setOpeningBalance(billing.openingBalance);
+  }, [tenant.id, isOpen]);
+
+  // Real-time calculated live total due matching direct edits
+  const liveTotalDue = baseRent + elecCharges + waterCharges + otherFees + openingBalance;
+  const liveOutstanding = Math.max(0, liveTotalDue - billing.paidAmount);
+
+  // Filter history entries that contain records for this tenant
+  const tenantHistory = history.filter((h: any) => 
+    h.snapshot.tenants.some((t: any) => t.id === tenant.id)
+  );
+
+  const handleSave = () => {
+    onSaveBillEdit(tenant.id, {
+      baseRent,
+      electricityCharges: elecCharges,
+      waterCharges: waterCharges,
+      otherFees: otherFees,
+      openingBalance,
+      totalDue: liveTotalDue
+    });
+    setIsEditing(false);
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Tenant Dossier & Records`}>
+      <div className="space-y-6">
+        {/* Dossier Header Info */}
+        <div className="p-6 bg-white/5 rounded-3xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="text-xl font-extrabold text-white">{tenant.name}</h4>
+              <span className="px-2.5 py-0.5 bg-slate-800 rounded-lg text-[10px] font-mono text-slate-400">RM {tenant.roomNumber}</span>
+            </div>
+            <p className="text-xs text-slate-400 font-medium mt-1">{property.name}</p>
+          </div>
+          {tenant.whatsappNumber && (
+            <div className="text-sm text-slate-500 font-mono">
+              WhatsApp: <span className="text-blue-400 font-bold">{tenant.whatsappNumber}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Current Month Bill Profile (Inline View/Edit) */}
+        <div className="p-6 bg-slate-900/40 rounded-3xl border border-white/5">
+          <div className="flex justify-between items-center border-b border-white/10 pb-4 mb-4">
+            <div>
+              <h5 className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">Cycle Bill & Overrides</h5>
+              <p className="text-[10px] text-slate-500 mt-0.5">Toggle Edit Bill to apply manual direct charge adjustments.</p>
+            </div>
+            <button
+              onClick={() => setIsEditing(!isEditing)}
+              className="btn btn-secondary px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+              {isEditing ? 'Cancel Edit' : 'Edit Bill'}
+            </button>
+          </div>
+
+          {isEditing ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Base Rent (Rent)</label>
+                  <input
+                    type="number"
+                    className="input bg-slate-950/80 border-white/10 mt-1"
+                    value={baseRent}
+                    onChange={e => setBaseRent(Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Arrears (Opening Bal)</label>
+                  <input
+                    type="number"
+                    className="input bg-slate-950/80 border-white/10 mt-1"
+                    value={openingBalance}
+                    onChange={e => setOpeningBalance(Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Elec. Charges</label>
+                  <input
+                    type="number"
+                    className="input bg-slate-950/80 border-white/10 mt-1"
+                    value={elecCharges}
+                    onChange={e => setElecCharges(Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Water Charges</label>
+                  <input
+                    type="number"
+                    className="input bg-slate-950/80 border-white/10 mt-1"
+                    value={waterCharges}
+                    onChange={e => setWaterCharges(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Other Fees & Services</label>
+                  <input
+                    type="number"
+                    className="input bg-slate-950/80 border-white/10 mt-1"
+                    value={otherFees}
+                    onChange={e => setOtherFees(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {/* Dynamic Live Calculations */}
+              <div className="grid grid-cols-2 gap-4 p-4 bg-white/5 rounded-2xl border border-white/5 mt-4">
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">New Bill Total</p>
+                  <p className="text-xl font-bold text-white font-mono">₹{liveTotalDue.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Outstanding</p>
+                  <p className="text-xl font-bold text-rose-400 font-mono">₹{liveOutstanding.toLocaleString()}</p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleSave}
+                className="btn btn-primary w-full py-3 text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-500 hover:text-white cursor-pointer"
+              >
+                Save Overridden Values
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="bg-slate-950/50 p-3 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block">Base Rent</span>
+                  <span className="text-sm font-bold text-white font-mono">₹{billing.baseRent.toLocaleString()}</span>
+                </div>
+                <div className="bg-slate-950/50 p-3 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block">Electricity</span>
+                  <span className="text-sm font-bold text-white font-mono">
+                    ₹{billing.electricityCharges.toLocaleString()} 
+                    <span className="text-[9px] text-slate-500 font-mono ml-1">({billing.elecUnits}U)</span>
+                  </span>
+                </div>
+                <div className="bg-slate-950/50 p-3 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block">Water</span>
+                  <span className="text-sm font-bold text-white font-mono">
+                    ₹{billing.waterCharges.toLocaleString()}
+                    <span className="text-[9px] text-slate-500 font-mono ml-1">({billing.waterUnits}U)</span>
+                  </span>
+                </div>
+                <div className="bg-slate-950/50 p-3 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block">Other Fees</span>
+                  <span className="text-sm font-bold text-white font-mono">₹{billing.otherFees.toLocaleString()}</span>
+                </div>
+                <div className="bg-slate-950/50 p-3 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block">Opening Arrears</span>
+                  <span className="text-sm font-bold text-amber-500 font-mono">₹{billing.openingBalance.toLocaleString()}</span>
+                </div>
+                <div className="bg-white/5 p-3 rounded-2xl border border-blue-500/10">
+                  <span className="text-[9px] uppercase tracking-wider text-blue-400 font-black block">Total Bill Due</span>
+                  <span className="text-sm font-bold text-white font-mono">₹{billing.totalDue.toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex justify-between items-center mt-2">
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Outstanding Balance</span>
+                  <p className={cn("text-lg font-black font-mono", billing.outstandingBalance > 0 ? "text-rose-400" : "text-emerald-400")}>
+                    ₹{billing.outstandingBalance.toLocaleString()}
+                  </p>
+                </div>
+                <span className={cn(
+                  "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border",
+                  tenant.isPaid ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : billing.paidAmount > 0 ? "bg-amber-500/10 text-amber-400 border-amber-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                )}>
+                  {tenant.isPaid ? 'Settled' : billing.paidAmount > 0 ? 'Partial' : 'Unpaid'}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Previous Month Bill History Section */}
+        <div className="space-y-3">
+          <div>
+            <h5 className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">Previous Billing History</h5>
+            <p className="text-[10px] text-slate-500 mt-0.5">Click into any past month snapshot ledger to manage or alter archives.</p>
+          </div>
+
+          {tenantHistory.length > 0 ? (
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+              {tenantHistory.map((h: any) => {
+                const histTenant = h.snapshot.tenants.find((t: any) => t.id === tenant.id);
+                const histProp = h.snapshot.property;
+                
+                // Historical calculated billing details
+                const detail = getTenantBillingDetails(histTenant, histProp);
+
+                return (
+                  <div key={h.id} className="p-4 bg-slate-900/50 hover:bg-slate-900/80 rounded-2xl border border-white/5 transition-all flex items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white">{h.month}</span>
+                        <span className={cn(
+                          "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border",
+                          histTenant.isPaid ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                        )}>
+                          {histTenant.isPaid ? 'Paid' : 'Due'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono">
+                        Charges: <span className="text-slate-300 font-bold">₹{detail.totalDue.toLocaleString()}</span> &bull; 
+                        Paid: <span className="text-emerald-400 font-bold">₹{detail.paidAmount.toLocaleString()}</span> &bull;
+                        Outstanding: <span className="text-rose-400 font-bold">₹{detail.outstandingBalance.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => onOpenHistoryDetail(h)}
+                      className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-[10px] uppercase tracking-wider font-extrabold text-blue-400 border border-blue-500/15 rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <LayoutList className="w-3.5 h-3.5" />
+                      View Snapshot
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-8 text-center bg-white/5 rounded-3xl border border-white/5 italic text-xs text-slate-600">
+              No previous ledger transactions recorded yet for this tenant.
+            </div>
+          )}
         </div>
       </div>
     </Modal>

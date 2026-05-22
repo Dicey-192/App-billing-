@@ -1,6 +1,6 @@
 import React from 'react';
 import { Property, Tenant } from '../types';
-import { formatCurrency, formatDate } from '../lib/utils';
+import { formatCurrency, formatDate, getTenantBillingDetails } from '../lib/utils';
 import NepaliDate from 'nepali-date-converter';
 
 interface ReceiptTemplateProps {
@@ -10,14 +10,7 @@ interface ReceiptTemplateProps {
 }
 
 export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tenant, month }) => {
-  const elecUnits = Math.max(0, tenant.currElecReading - tenant.prevElecReading);
-  const waterUnits = Math.max(0, tenant.currWaterReading - tenant.prevWaterReading);
-  
-  const elecAmount = elecUnits * property.electricRate;
-  const waterAmount = waterUnits * property.waterRate;
-  
-  const totalExtra = tenant.expenses.reduce((acc, exp) => acc + exp.amount, 0);
-  const totalDue = tenant.rent + elecAmount + waterAmount + totalExtra + tenant.previousDues;
+  const billing = getTenantBillingDetails(tenant, property);
 
   const today = new Date();
   const nepaliDateStr = new NepaliDate(today).format('YYYY-MM-DD');
@@ -65,13 +58,13 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
             backgroundImage: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.2))'
           }}
         >
-          <p className="text-[11px] font-mono tracking-[0.2em] uppercase mb-1" style={{ color: '#64748b' }}>
+          <p className="text-[14px] font-mono tracking-[0.2em] uppercase mb-1" style={{ color: '#64748b' }}>
             {receiptId}
           </p>
-          <h2 className="text-4xl font-extrabold tracking-widest uppercase mb-3" style={{ color: '#ffffff' }}>
+          <h2 className="text-5xl font-extrabold tracking-widest uppercase mb-3" style={{ color: '#ffffff' }}>
             {tenant.name}
           </h2>
-          <p className="text-xs font-semibold tracking-wide text-slate-400">
+          <p className="text-sm font-semibold tracking-wide text-slate-400">
             {englishDateStr} • {nepaliDateStr}
           </p>
         </div>
@@ -80,8 +73,8 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
         <div className="p-10 space-y-8">
           
           {/* Property Info Badge */}
-          <div className="flex justify-between items-center bg-white/[0.01] border border-white/5 rounded-2xl px-5 py-3 text-xs">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Property Origin</span>
+          <div className="flex justify-between items-center bg-white/[0.01] border border-white/5 rounded-2xl px-5 py-3 text-sm">
+            <span className="text-[12px] font-bold uppercase tracking-[0.14em] text-slate-500">Property Origin</span>
             <span className="text-slate-300 font-medium">{property.name} &bull; Room #{tenant.roomNumber}</span>
           </div>
 
@@ -90,53 +83,53 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
             <div className="grid grid-cols-2 gap-x-12 gap-y-6">
               {/* Row 1, Col 1: Base Rent */}
               <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <span className="text-slate-400 font-medium text-sm">Base Rent</span>
-                <span className="font-bold text-white text-lg font-mono">{formatCurrency(tenant.rent)}</span>
+                <span className="text-slate-400 font-medium text-base">Base Rent</span>
+                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.baseRent)}</span>
               </div>
 
               {/* Row 1, Col 2: Maintenance */}
               <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <span className="text-slate-400 font-medium text-sm">Maintenance</span>
-                <span className="font-bold text-white text-lg font-mono">{formatCurrency(totalExtra)}</span>
+                <span className="text-slate-400 font-medium text-base">Maintenance</span>
+                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.otherFees)}</span>
               </div>
 
               {/* Row 2, Col 1: Electricity with sub-line */}
               <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
                 <div>
-                  <span className="text-slate-400 font-medium text-sm block">Electricity</span>
-                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
-                    {elecUnits} U x {formatCurrency(property.electricRate)}/U
+                  <span className="text-slate-400 font-medium text-base block">Electricity</span>
+                  <span className="text-[13px] text-slate-500 font-mono block mt-0.5">
+                    {billing.elecUnits} U x {formatCurrency(property.electricRate)}/U
                   </span>
                 </div>
-                <span className="font-bold text-white text-lg font-mono">{formatCurrency(elecAmount)}</span>
+                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.electricityCharges)}</span>
               </div>
 
               {/* Row 2, Col 2: Water with sub-line */}
               <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
                 <div>
-                  <span className="text-slate-400 font-medium text-sm block">Water</span>
-                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
-                    {waterUnits} U x {formatCurrency(property.waterRate)}/U
+                  <span className="text-slate-400 font-medium text-base block">Water</span>
+                  <span className="text-[13px] text-slate-500 font-mono block mt-0.5">
+                    {billing.waterUnits} U x {formatCurrency(property.waterRate)}/U
                   </span>
                 </div>
-                <span className="font-bold text-white text-lg font-mono">{formatCurrency(waterAmount)}</span>
+                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.waterCharges)}</span>
               </div>
             </div>
 
             {/* Row 3: Previous Dues */}
             <div className="flex justify-between items-baseline pt-2 pb-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-              <span className="text-slate-400 font-medium text-sm">Previous Dues</span>
-              <span className="font-bold text-white text-lg font-mono">{formatCurrency(tenant.previousDues)}</span>
+              <span className="text-slate-400 font-medium text-base">Previous Dues</span>
+              <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.openingBalance)}</span>
             </div>
           </div>
 
           {/* METER DETAIL INSIGHT (Clear column headers and value alignment) */}
           <div className="rounded-3xl border p-6 bg-white/[0.01]" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.2em] mb-4 text-slate-500">
+            <p className="text-[12px] font-extrabold uppercase tracking-[0.2em] mb-4 text-slate-500">
               Meter Detail Insight
             </p>
             
-            <div className="grid grid-cols-4 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 pb-2 border-b border-white/5 mb-3">
+            <div className="grid grid-cols-4 text-left text-[13px] font-bold uppercase tracking-[0.14em] text-slate-500 pb-2 border-b border-white/5 mb-3">
               <div>Category</div>
               <div className="text-right">Previous</div>
               <div className="text-right">Current</div>
@@ -145,19 +138,19 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
             
             <div className="space-y-4">
               {/* Electricity Meter Row */}
-              <div className="grid grid-cols-4 text-sm items-center">
+              <div className="grid grid-cols-4 text-base items-center">
                 <div className="font-semibold text-white">Electricity</div>
                 <div className="text-right font-mono text-slate-400">{tenant.prevElecReading}</div>
                 <div className="text-right font-mono text-slate-400">{tenant.currElecReading}</div>
-                <div className="text-right font-mono font-bold text-blue-400">{elecUnits}</div>
+                <div className="text-right font-mono font-bold text-blue-400">{billing.elecUnits}</div>
               </div>
               
               {/* Water Meter Row */}
-              <div className="grid grid-cols-4 text-sm items-center">
+              <div className="grid grid-cols-4 text-base items-center">
                 <div className="font-semibold text-white">Water</div>
                 <div className="text-right font-mono text-slate-400">{tenant.prevWaterReading}</div>
                 <div className="text-right font-mono text-slate-400">{tenant.currWaterReading}</div>
-                <div className="text-right font-mono font-bold text-blue-400">{waterUnits}</div>
+                <div className="text-right font-mono font-bold text-blue-400">{billing.waterUnits}</div>
               </div>
             </div>
           </div>
@@ -171,18 +164,18 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
             }}
           >
             <div>
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-blue-400 mb-1">
+              <p className="text-[12px] font-extrabold uppercase tracking-[0.15em] text-blue-400 mb-1">
                 Net Amount Due
               </p>
-              <p className="text-4xl font-black font-mono text-white tracking-tight">
-                {formatCurrency(Math.max(0, totalDue - (tenant.paidAmount || 0)))}
+              <p className="text-[40px] font-black font-mono text-white tracking-tight">
+                {formatCurrency(billing.outstandingBalance)}
               </p>
             </div>
             <div className="text-left sm:text-right">
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-slate-500 mb-1">
+              <p className="text-[12px] font-extrabold uppercase tracking-[0.15em] text-slate-500 mb-1">
                 Due By
               </p>
-              <p className="text-lg font-black text-white uppercase tracking-wider">
+              <p className="text-xl font-black text-white uppercase tracking-wider">
                 {dueDateStr}
               </p>
             </div>
@@ -199,7 +192,7 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
           }}
         >
           <div className="flex flex-col items-center sm:items-start gap-2.5">
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
+            <span className="text-[12px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
               Scan To Pay
             </span>
             {property.qrCodeDataUrl ? (
@@ -220,10 +213,10 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
           </div>
           
           <div className="text-center sm:text-right space-y-1">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">
               Secured Digital Receipt
             </p>
-            <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600">
+            <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-600">
               System Generated
             </p>
           </div>

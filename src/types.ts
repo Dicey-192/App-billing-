@@ -21,6 +21,10 @@ export interface ManualOverrides {
   totalDue?: number;
   paidAmount?: number;
   isPaid?: boolean;
+  baseRent?: number;
+  electricityCharges?: number;
+  waterCharges?: number;
+  otherFees?: number;
 }
 
 export interface AuditLogEntry {

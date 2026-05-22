@@ -166,16 +166,23 @@ export function useStorage() {
             openingBalance = t.previousDues;
           }
           
-          const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-          const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-          const totalExtra = (t.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
+          const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
           
-          const baseCharges = t.rent + 
-                          (elecUnits * prop.electricRate) + 
-                          (waterUnits * prop.waterRate) + totalExtra;
+          const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
+          const defaultElecCharges = elecUnits * prop.electricRate;
+          const electricityCharges = t.manualOverrides?.electricityCharges !== undefined ? t.manualOverrides.electricityCharges : defaultElecCharges;
+          
+          const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
+          const defaultWaterCharges = waterUnits * prop.waterRate;
+          const waterCharges = t.manualOverrides?.waterCharges !== undefined ? t.manualOverrides.waterCharges : defaultWaterCharges;
+          
+          const defaultOtherFees = (t.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
+          const otherFees = t.manualOverrides?.otherFees !== undefined ? t.manualOverrides.otherFees : defaultOtherFees;
+          
+          const currentCharges = baseRent + electricityCharges + waterCharges + otherFees;
           
           // Determine totalDue
-          let totalDue = openingBalance + baseCharges;
+          let totalDue = openingBalance + currentCharges;
           if (t.manualOverrides?.totalDue !== undefined) {
             totalDue = t.manualOverrides.totalDue;
           }
@@ -194,7 +201,7 @@ export function useStorage() {
             isPaid = paid >= totalDue;
           }
           
-          const remaining = Math.max(0, totalDue - paid);
+          const remaining = isPaid ? 0 : Math.max(0, totalDue - paid);
           
           tenantBalances.set(t.id, remaining);
 
@@ -218,7 +225,7 @@ export function useStorage() {
 
       // Update current tenants with final balances
       const finalTenants = newTenants.map(t => {
-        let openingBalance = tenantBalances.get(t.id) ?? 0;
+        let openingBalance = tenantBalances.has(t.id) ? tenantBalances.get(t.id)! : t.previousDues;
         if (t.manualOverrides?.openingBalance !== undefined) {
           openingBalance = t.manualOverrides.openingBalance;
         }
