@@ -754,6 +754,23 @@ export default function App() {
             });
           }}
           onOpenHistoryDetail={(entry) => setHistoryModal({ open: true, data: entry })}
+          onUpdateTenant={(tenantId, updates) => {
+            pushToUndo();
+            updateTenant(tenantId, updates);
+            // Immediate UI feedback within the open profile modal
+            setProfileModal(prev => {
+              if (prev.tenant && prev.tenant.id === tenantId) {
+                return {
+                  ...prev,
+                  tenant: {
+                    ...prev.tenant,
+                    ...updates
+                  }
+                };
+              }
+              return prev;
+            });
+          }}
         />
       )}
 

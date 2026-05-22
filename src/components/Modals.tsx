@@ -761,12 +761,10 @@ export const HistoryDetailModal: React.FC<{
   const [overridePaidAmount, setOverridePaidAmount] = useState<number>(0);
   const [overrideIsPaid, setOverrideIsPaid] = useState<boolean>(false);
 
-  if (!entry) return null;
-
-  const selectedTenant = entry.snapshot.tenants.find((t: any) => t.id === selectedTenantId);
+  const selectedTenant = entry ? entry.snapshot.tenants.find((t: any) => t.id === selectedTenantId) : null;
 
   useEffect(() => {
-    if (selectedTenant) {
+    if (selectedTenant && entry) {
       const p = entry.snapshot.property;
       const elecUnits = Math.max(0, selectedTenant.currElecReading - selectedTenant.prevElecReading);
       const waterUnits = Math.max(0, selectedTenant.currWaterReading - selectedTenant.prevWaterReading);
@@ -780,7 +778,9 @@ export const HistoryDetailModal: React.FC<{
       setOverridePaidAmount(selectedTenant.manualOverrides?.paidAmount ?? selectedTenant.paidAmount ?? 0);
       setOverrideIsPaid(selectedTenant.manualOverrides?.isPaid ?? selectedTenant.isPaid ?? false);
     }
-  }, [selectedTenantId, entry]);
+  }, [selectedTenantId, entry, selectedTenant]);
+
+  if (!entry) return null;
 
   const handleAddPayment = () => {
     if (!selectedTenantId || paymentAmount <= 0) return;
@@ -1124,7 +1124,8 @@ export const TenantProfileModal: React.FC<{
   history: any[];
   onSaveBillEdit: (tenantId: string, overrides: Partial<ManualOverrides>) => void;
   onOpenHistoryDetail: (entry: any) => void;
-}> = ({ isOpen, onClose, tenant, property, history, onSaveBillEdit, onOpenHistoryDetail }) => {
+  onUpdateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
+}> = ({ isOpen, onClose, tenant, property, history, onSaveBillEdit, onOpenHistoryDetail, onUpdateTenant }) => {
   const billing = getTenantBillingDetails(tenant, property);
   
   const [isEditing, setIsEditing] = useState(false);
@@ -1134,6 +1135,10 @@ export const TenantProfileModal: React.FC<{
   const [otherFees, setOtherFees] = useState(billing.otherFees);
   const [openingBalance, setOpeningBalance] = useState(billing.openingBalance);
 
+  const [partialPayment, setPartialPayment] = useState<number>(billing.paidAmount);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
+
   // Sync state with tenant details when tenant changes or modal is opened
   useEffect(() => {
     setBaseRent(billing.baseRent);
@@ -1141,7 +1146,9 @@ export const TenantProfileModal: React.FC<{
     setWaterCharges(billing.waterCharges);
     setOtherFees(billing.otherFees);
     setOpeningBalance(billing.openingBalance);
-  }, [tenant.id, isOpen]);
+    setPartialPayment(billing.paidAmount);
+    setValidationError(null);
+  }, [tenant.id, isOpen, billing.baseRent, billing.electricityCharges, billing.waterCharges, billing.otherFees, billing.openingBalance, billing.paidAmount]);
 
   // Real-time calculated live total due matching direct edits
   const liveTotalDue = baseRent + elecCharges + waterCharges + otherFees + openingBalance;
@@ -1162,6 +1169,38 @@ export const TenantProfileModal: React.FC<{
       totalDue: liveTotalDue
     });
     setIsEditing(false);
+  };
+
+  const handlePartialPaymentChange = (value: number) => {
+    if (value < 0) {
+      setValidationError("Amount cannot be negative");
+      setPartialPayment(value);
+      return;
+    }
+    if (value > billing.totalDue) {
+      setValidationError(`Amount cannot exceed the total due of ${formatCurrency(billing.totalDue)}`);
+      setPartialPayment(value);
+      return;
+    }
+    setValidationError(null);
+    setPartialPayment(value);
+  };
+
+  const handleUpdatePayment = (valueToSave: number) => {
+    if (valueToSave < 0 || valueToSave > billing.totalDue) {
+      return;
+    }
+    const isFullyPaid = valueToSave >= billing.totalDue;
+    
+    onUpdateTenant(tenant.id, {
+      paidAmount: valueToSave,
+      isPaid: isFullyPaid,
+      manualOverrides: tenant.manualOverrides ? {
+        ...tenant.manualOverrides,
+        paidAmount: valueToSave,
+        isPaid: isFullyPaid
+      } : undefined
+    });
   };
 
   return (
@@ -1316,6 +1355,69 @@ export const TenantProfileModal: React.FC<{
                 )}>
                   {tenant.isPaid ? 'Settled' : billing.paidAmount > 0 ? 'Partial' : 'Unpaid'}
                 </span>
+              </div>
+
+              {/* Partial Payment / Adjust Payment Section */}
+              <div className="mt-4 p-4 bg-slate-950/40 rounded-2xl border border-white/5 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h6 className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-400">
+                    Partial Payment / Adjust Payment
+                  </h6>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Total Due: ₹{billing.totalDue.toLocaleString()}
+                  </span>
+                </div>
+                
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-slate-400 text-xs font-bold">₦</span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      className={cn(
+                        "input pl-8 text-xs font-mono bg-slate-950 text-amber-300 border border-white/10 focus:border-amber-500 w-full transition-colors h-10 rounded-xl",
+                        validationError && "border-rose-500 focus:border-rose-500 text-rose-400"
+                      )}
+                      placeholder="Enter amount (₦)..."
+                      value={partialPayment === 0 && isFocused === false ? "" : partialPayment}
+                      onChange={e => {
+                        const val = e.target.value === "" ? 0 : Number(e.target.value);
+                        handlePartialPaymentChange(val);
+                      }}
+                      onBlur={() => {
+                        setIsFocused(false);
+                        if (!validationError) {
+                          handleUpdatePayment(partialPayment);
+                        }
+                      }}
+                      onFocus={() => setIsFocused(true)}
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      if (!validationError) {
+                        handleUpdatePayment(partialPayment);
+                      }
+                    }}
+                    disabled={!!validationError}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 h-10 shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+                  >
+                    Update
+                  </button>
+                </div>
+
+                {validationError ? (
+                  <p className="text-[10px] text-rose-400 font-semibold">{validationError}</p>
+                ) : (
+                  <div className="text-[10px] text-slate-400 flex justify-between items-center bg-white/[0.02] p-2 rounded-lg border border-white/[0.02]">
+                    <span className="font-bold">Partial Payment (₦)</span>
+                    <span className="font-mono">
+                      Remaining Balance: ₦{Math.max(0, billing.totalDue - partialPayment).toLocaleString()}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
