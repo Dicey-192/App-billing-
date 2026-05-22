@@ -20,8 +20,25 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
   const totalDue = tenant.rent + elecAmount + waterAmount + totalExtra + tenant.previousDues;
 
   const today = new Date();
-  const nepaliDateStr = new NepaliDate(today).format('YYYY/MM/DD');
+  const nepaliDateStr = new NepaliDate(today).format('YYYY-MM-DD');
   const englishDateStr = formatDate(today);
+
+  // Deterministic 5-digit Invoice Number helper
+  const getReceiptId = (tenantId: string, monthName: string) => {
+    let hash = 0;
+    const str = tenantId + monthName;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash % 90000) + 10000;
+  };
+  const receiptId = getReceiptId(tenant.id, month);
+
+  // Due date (exactly 10 days after payment generation date - like April 24 -> May 4)
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 10);
+  const dueDateStr = formatDate(dueDate);
 
   return (
     <div 
@@ -33,137 +50,185 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
         color: '#ffffff'
       }}
     >
-      {/* Background Accents for the Image */}
+      {/* Background Accents */}
       <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[80px]" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)' }} />
       <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full blur-[80px]" style={{ backgroundColor: 'rgba(147, 51, 234, 0.1)' }} />
 
       <div className="relative border rounded-[3rem] overflow-hidden shadow-2xl" style={{ borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.02)', backdropFilter: 'blur(40px)' }}>
-        {/* Brand Header */}
-        <div className="p-10 border-b flex justify-between items-start" style={{ borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.05)' }}>
-          <div className="text-left">
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] mb-2" style={{ color: '#64748b' }}>Billing Period</p>
-            <h2 className="text-3xl font-bold tracking-tight mb-2" style={{ color: '#ffffff' }}>{month}</h2>
-            <p className="text-[11px] font-mono" style={{ color: '#64748b' }}>
-              AD: {englishDateStr} | BS: {nepaliDateStr}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] mb-3" style={{ color: '#64748b' }}>Recipient Details</p>
-            <h3 className="text-3xl font-bold mb-1" style={{ color: '#ffffff' }}>{tenant.name}</h3>
-            <p className="text-lg uppercase tracking-wider font-bold" style={{ color: '#94a3b8' }}>Room #{tenant.roomNumber}</p>
-          </div>
+        
+        {/* Brand Header Block (top rounded) */}
+        <div 
+          className="p-10 border-b text-center relative" 
+          style={{ 
+            borderColor: 'rgba(255,255,255,0.1)', 
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            backgroundImage: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.2))'
+          }}
+        >
+          <p className="text-[11px] font-mono tracking-[0.2em] uppercase mb-1" style={{ color: '#64748b' }}>
+            {receiptId}
+          </p>
+          <h2 className="text-4xl font-extrabold tracking-widest uppercase mb-3" style={{ color: '#ffffff' }}>
+            {tenant.name}
+          </h2>
+          <p className="text-xs font-semibold tracking-wide text-slate-400">
+            {englishDateStr} • {nepaliDateStr}
+          </p>
         </div>
 
-        <div className="px-10 py-10">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] mb-3" style={{ color: '#64748b' }}>Property Origin</p>
-            <h3 className="text-2xl font-bold mb-1" style={{ color: '#ffffff' }}>{property.name}</h3>
-            <p className="text-base leading-relaxed max-w-[500px] italic" style={{ color: '#64748b' }}>
-              {property.address}
-            </p>
+        {/* Content Body */}
+        <div className="p-10 space-y-8">
+          
+          {/* Property Info Badge */}
+          <div className="flex justify-between items-center bg-white/[0.01] border border-white/5 rounded-2xl px-5 py-3 text-xs">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Property Origin</span>
+            <span className="text-slate-300 font-medium">{property.name} &bull; Room #{tenant.roomNumber}</span>
           </div>
-        </div>
 
-        <div className="px-10 pb-10">
-          <div className="rounded-3xl border overflow-hidden" style={{ borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 23, 42, 0.4)' }}>
-            <table className="w-full text-left">
-              <thead>
-                <tr className="text-[11px] uppercase tracking-[0.2em] font-black border-b" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: '#64748b', borderColor: 'rgba(255,255,255,0.05)' }}>
-                  <th className="px-8 py-6">Line Item</th>
-                  <th className="px-8 py-6 text-right">Metric</th>
-                  <th className="px-8 py-6 text-right">Valuation</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <tr className="group text-lg">
-                  <td className="px-8 py-6">
-                    <p className="font-bold tracking-wide" style={{ color: '#ffffff' }}>Base Rental</p>
-                  </td>
-                  <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#64748b' }}>-</td>
-                  <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#ffffff' }}>{formatCurrency(tenant.rent)}</td>
-                </tr>
-                <tr className="group text-lg">
-                  <td className="px-8 py-6">
-                    <p className="font-bold tracking-wide" style={{ color: '#ffffff' }}>Electric Utility</p>
-                    <p className="text-[14px] mt-1 uppercase tracking-tight font-black" style={{ color: '#94a3b8' }}>{tenant.currElecReading} – {tenant.prevElecReading} UNITS</p>
-                  </td>
-                  <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#64748b' }}>@{formatCurrency(property.electricRate)}</td>
-                  <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#ffffff' }}>{formatCurrency(elecAmount)}</td>
-                </tr>
-                <tr className="group text-lg">
-                  <td className="px-8 py-6">
-                    <p className="font-bold tracking-wide" style={{ color: '#ffffff' }}>Water Consumption</p>
-                    <p className="text-[14px] mt-1 uppercase tracking-tight font-black" style={{ color: '#94a3b8' }}>{tenant.currWaterReading} – {tenant.prevWaterReading} UNITS</p>
-                  </td>
-                  <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#64748b' }}>@{formatCurrency(property.waterRate)}</td>
-                  <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#ffffff' }}>{formatCurrency(waterAmount)}</td>
-                </tr>
-                {tenant.expenses.map((exp) => (
-                  <tr key={exp.id} className="group text-lg">
-                    <td className="px-8 py-6">
-                      <p className="font-bold tracking-wide" style={{ color: '#ffffff' }}>{exp.name}</p>
-                    </td>
-                    <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#64748b' }}>-</td>
-                    <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#ffffff' }}>{formatCurrency(exp.amount)}</td>
-                  </tr>
-                ))}
-                {tenant.previousDues > 0 && (
-                  <tr className="text-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
-                    <td className="px-8 py-6">
-                      <p className="font-bold tracking-wide" style={{ color: '#f87171' }}>Arrears / Opening Balance</p>
-                      <p className="text-[12px] mt-1 uppercase tracking-tight font-black" style={{ color: '#fca5a5' }}>Brought forward from previous month</p>
-                    </td>
-                    <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#fca5a5' }}>Accumulated</td>
-                    <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#f87171' }}>{formatCurrency(tenant.previousDues)}</td>
-                  </tr>
-                )}
-                {(tenant.paidAmount || 0) > 0 && (
-                  <tr className="text-lg" style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)' }}>
-                    <td className="px-8 py-6">
-                      <p className="font-bold tracking-wide" style={{ color: '#34d399' }}>Payments Received</p>
-                      <p className="text-[12px] mt-1 uppercase tracking-tight font-black" style={{ color: '#6ee7b7' }}>Credits applied to this period</p>
-                    </td>
-                    <td className="px-8 py-6 text-right font-mono text-sm" style={{ color: '#6ee7b7' }}>-</td>
-                    <td className="px-8 py-6 text-right font-mono font-bold" style={{ color: '#34d399' }}>-{formatCurrency(tenant.paidAmount || 0)}</td>
-                  </tr>
-                )}
-              </tbody>
-              <tfoot>
-                <tr className="border-t" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', borderColor: 'rgba(59, 130, 246, 0.2)' }}>
-                  <td className="px-8 py-8 font-black text-3xl uppercase tracking-tighter" style={{ color: '#ffffff' }} colSpan={2}>
-                    { (totalDue - (tenant.paidAmount || 0)) <= 0 ? 'Fully Settled' : 'Net Payable' }
-                  </td>
-                  <td className="px-8 py-8 text-right font-mono font-black text-5xl shadow-[0_0_20px_rgba(37,99,235,0.2)]" style={{ color: '#60a5fa' }}>
-                    {formatCurrency(Math.max(0, totalDue - (tenant.paidAmount || 0)))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
+          {/* Charges Section Grid (vertically stacked columns, left-aligned) */}
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-x-12 gap-y-6">
+              {/* Row 1, Col 1: Base Rent */}
+              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                <span className="text-slate-400 font-medium text-sm">Base Rent</span>
+                <span className="font-bold text-white text-lg font-mono">{formatCurrency(tenant.rent)}</span>
+              </div>
 
-        <div className="px-12 py-10 border-t flex justify-between items-center" style={{ borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.01)' }}>
-          <div className="flex items-center gap-8">
-            <div>
-               <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4" style={{ color: '#64748b' }}>Official Payment Portal</p>
-               {property.qrCodeDataUrl ? (
-                  <div className="relative group">
-                    <div className="absolute inset-0 rounded-2xl blur-xl transition-all" style={{ backgroundColor: 'rgba(37, 99, 235, 0.2)' }} />
-                    <img src={property.qrCodeDataUrl} alt="PaymentQR" className="relative w-36 h-36 bg-white p-3 rounded-2xl border" style={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-                  </div>
-               ) : (
-                 <div className="w-36 h-36 border-2 border-dashed rounded-2xl flex items-center justify-center italic text-[10px] text-center p-4" style={{ borderColor: 'rgba(255,255,255,0.1)', color: '#475569' }}>
-                    QR PORTAL<br/>NOT CONFIGURED
-                 </div>
-               )}
+              {/* Row 1, Col 2: Maintenance */}
+              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                <span className="text-slate-400 font-medium text-sm">Maintenance</span>
+                <span className="font-bold text-white text-lg font-mono">{formatCurrency(totalExtra)}</span>
+              </div>
+
+              {/* Row 2, Col 1: Electricity with sub-line */}
+              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                <div>
+                  <span className="text-slate-400 font-medium text-sm block">Electricity</span>
+                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                    {elecUnits} U x {formatCurrency(property.electricRate)}/U
+                  </span>
+                </div>
+                <span className="font-bold text-white text-lg font-mono">{formatCurrency(elecAmount)}</span>
+              </div>
+
+              {/* Row 2, Col 2: Water with sub-line */}
+              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                <div>
+                  <span className="text-slate-400 font-medium text-sm block">Water</span>
+                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                    {waterUnits} U x {formatCurrency(property.waterRate)}/U
+                  </span>
+                </div>
+                <span className="font-bold text-white text-lg font-mono">{formatCurrency(waterAmount)}</span>
+              </div>
+            </div>
+
+            {/* Row 3: Previous Dues */}
+            <div className="flex justify-between items-baseline pt-2 pb-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+              <span className="text-slate-400 font-medium text-sm">Previous Dues</span>
+              <span className="font-bold text-white text-lg font-mono">{formatCurrency(tenant.previousDues)}</span>
             </div>
           </div>
-          <div className="text-right">
-             <p className="text-[10px] font-bold uppercase tracking-[0.4em]" style={{ color: '#334155' }}>
-               Artha Billing System
-             </p>
+
+          {/* METER DETAIL INSIGHT (Clear column headers and value alignment) */}
+          <div className="rounded-3xl border p-6 bg-white/[0.01]" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.2em] mb-4 text-slate-500">
+              Meter Detail Insight
+            </p>
+            
+            <div className="grid grid-cols-4 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 pb-2 border-b border-white/5 mb-3">
+              <div>Category</div>
+              <div className="text-right">Previous</div>
+              <div className="text-right">Current</div>
+              <div className="text-right">Units</div>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Electricity Meter Row */}
+              <div className="grid grid-cols-4 text-sm items-center">
+                <div className="font-semibold text-white">Electricity</div>
+                <div className="text-right font-mono text-slate-400">{tenant.prevElecReading}</div>
+                <div className="text-right font-mono text-slate-400">{tenant.currElecReading}</div>
+                <div className="text-right font-mono font-bold text-blue-400">{elecUnits}</div>
+              </div>
+              
+              {/* Water Meter Row */}
+              <div className="grid grid-cols-4 text-sm items-center">
+                <div className="font-semibold text-white">Water</div>
+                <div className="text-right font-mono text-slate-400">{tenant.prevWaterReading}</div>
+                <div className="text-right font-mono text-slate-400">{tenant.currWaterReading}</div>
+                <div className="text-right font-mono font-bold text-blue-400">{waterUnits}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Net Amount Due & Due By Section (Prominent, matching layout) */}
+          <div 
+            className="rounded-3xl border p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6" 
+            style={{ 
+              borderColor: 'rgba(59, 130, 246, 0.2)', 
+              backgroundColor: 'rgba(37, 99, 235, 0.05)' 
+            }}
+          >
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-blue-400 mb-1">
+                Net Amount Due
+              </p>
+              <p className="text-4xl font-black font-mono text-white tracking-tight">
+                {formatCurrency(Math.max(0, totalDue - (tenant.paidAmount || 0)))}
+              </p>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-slate-500 mb-1">
+                Due By
+              </p>
+              <p className="text-lg font-black text-white uppercase tracking-wider">
+                {dueDateStr}
+              </p>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer (Scan to Pay left, secure info right) */}
+        <div 
+          className="px-10 py-8 border-t flex flex-col sm:flex-row justify-between items-center gap-6" 
+          style={{ 
+            borderColor: 'rgba(255,255,255,0.05)', 
+            backgroundColor: 'rgba(255,255,255,0.01)' 
+          }}
+        >
+          <div className="flex flex-col items-center sm:items-start gap-2.5">
+            <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
+              Scan To Pay
+            </span>
+            {property.qrCodeDataUrl ? (
+              <div className="relative group">
+                <div className="absolute inset-0 rounded-2xl blur-xl transition-all" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)' }} />
+                <img 
+                  src={property.qrCodeDataUrl} 
+                  alt="PaymentQR" 
+                  className="relative w-28 h-28 bg-white p-2 rounded-2xl border" 
+                  style={{ borderColor: 'rgba(255,255,255,0.1)' }} 
+                />
+              </div>
+            ) : (
+              <div className="w-28 h-28 border-2 border-dashed rounded-2xl flex items-center justify-center italic text-[9px] text-center p-3" style={{ borderColor: 'rgba(255,255,255,0.1)', color: '#475569' }}>
+                QR PORTAL<br/>NOT CONFIGURED
+              </div>
+            )}
+          </div>
+          
+          <div className="text-center sm:text-right space-y-1">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+              Secured Digital Receipt
+            </p>
+            <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-600">
+              System Generated
+            </p>
           </div>
         </div>
+
       </div>
     </div>
   );

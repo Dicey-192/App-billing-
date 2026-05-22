@@ -155,25 +155,55 @@ export function useStorage() {
         if (!prop) return entry;
 
         const updatedTenants = entry.snapshot.tenants.map(t => {
-          const openingBalance = tenantBalances.get(t.id) || 0;
+          // Determine openingBalance
+          let openingBalance = tenantBalances.get(t.id) ?? 0;
+          
+          if (t.manualOverrides?.openingBalance !== undefined) {
+            openingBalance = t.manualOverrides.openingBalance;
+          } else if (t.openingBalance !== undefined && tenantBalances.get(t.id) === undefined) {
+            openingBalance = t.openingBalance;
+          } else if (t.previousDues !== undefined && tenantBalances.get(t.id) === undefined) {
+            openingBalance = t.previousDues;
+          }
           
           const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
           const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-          const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
+          const totalExtra = (t.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
           
-          const totalDue = (openingBalance || 0) + t.rent + 
+          const baseCharges = t.rent + 
                           (elecUnits * prop.electricRate) + 
                           (waterUnits * prop.waterRate) + totalExtra;
           
-          const paid = t.paidAmount || 0;
-          const remaining = totalDue - paid;
+          // Determine totalDue
+          let totalDue = openingBalance + baseCharges;
+          if (t.manualOverrides?.totalDue !== undefined) {
+            totalDue = t.manualOverrides.totalDue;
+          }
+
+          // Determine paidAmount
+          let paid = t.paidAmount || 0;
+          if (t.manualOverrides?.paidAmount !== undefined) {
+            paid = t.manualOverrides.paidAmount;
+          }
+
+          // Determine status
+          let isPaid = t.isPaid;
+          if (t.manualOverrides?.isPaid !== undefined) {
+            isPaid = t.manualOverrides.isPaid;
+          } else {
+            isPaid = paid >= totalDue;
+          }
           
-          tenantBalances.set(t.id, Math.max(0, remaining));
+          const remaining = Math.max(0, totalDue - paid);
+          
+          tenantBalances.set(t.id, remaining);
 
           return { 
             ...t, 
             openingBalance, 
-            previousDues: openingBalance // In history, we store what was the 'previous dues' at the start
+            previousDues: openingBalance,
+            paidAmount: paid,
+            isPaid
           };
         });
 
@@ -187,14 +217,21 @@ export function useStorage() {
       });
 
       // Update current tenants with final balances
-      const finalTenants = newTenants.map(t => ({
-        ...t,
-        previousDues: tenantBalances.get(t.id) || 0
-      }));
+      const finalTenants = newTenants.map(t => {
+        let openingBalance = tenantBalances.get(t.id) ?? 0;
+        if (t.manualOverrides?.openingBalance !== undefined) {
+          openingBalance = t.manualOverrides.openingBalance;
+        }
+
+        return {
+          ...t,
+          previousDues: openingBalance
+        };
+      });
 
       return {
         ...prev,
-        history: processedHistory.sort((a, b) => b.createdAt - a.createdAt), // Restore original order
+        history: processedHistory.sort((a, b) => b.createdAt - a.createdAt), // Restore newest-first order
         tenants: finalTenants
       };
     });
@@ -224,6 +261,40 @@ export function useStorage() {
     recalculateBalances();
   }, [recalculateBalances]);
 
+  const addAuditLog = useCallback((tenantId: string, tenantName: string, month: string, fieldName: string, oldValue: string, newValue: string) => {
+    setData(prev => {
+      const logs = prev.auditLogs || [];
+      const newEntry = {
+        id: Math.random().toString(36).substring(2, 11),
+        tenantId,
+        tenantName,
+        month,
+        timestamp: Date.now(),
+        fieldName,
+        oldValue: String(oldValue),
+        newValue: String(newValue)
+      };
+      return {
+        ...prev,
+        auditLogs: [newEntry, ...logs]
+      };
+    });
+  }, []);
+
+  const toggleSupportMasterMode = useCallback(() => {
+    setData(prev => ({
+      ...prev,
+      supportMasterOverrideMode: !prev.supportMasterOverrideMode
+    }));
+  }, []);
+
+  const clearAuditLogs = useCallback(() => {
+    setData(prev => ({
+      ...prev,
+      auditLogs: []
+    }));
+  }, []);
+
   const cleanOldHistory = useCallback((monthsToKeep: number = 12) => {
     setData(prev => {
       const now = Date.now();
@@ -249,6 +320,8 @@ export function useStorage() {
     properties: data.properties,
     tenants: data.tenants,
     history: data.history,
+    auditLogs: data.auditLogs || [],
+    supportMasterOverrideMode: data.supportMasterOverrideMode || false,
     addProperty,
     updateProperty,
     deleteProperty,
@@ -265,6 +338,9 @@ export function useStorage() {
     cleanOldHistory,
     restoreData,
     recalculateBalances,
+    addAuditLog,
+    toggleSupportMasterMode,
+    clearAuditLogs,
     setData,
-  }), [data, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances]);
+  }), [data, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs]);
 }

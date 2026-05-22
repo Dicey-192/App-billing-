@@ -8,10 +8,225 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import html2canvas from 'html2canvas';
+
+const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+
+  const l = l_ * l_ * l_;
+  const m = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+
+  let r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  let bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076182910 * s;
+
+  const gamma = (x: number) => {
+    return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+  };
+
+  const R = Math.max(0, Math.min(255, Math.round(gamma(r) * 255)));
+  const G = Math.max(0, Math.min(255, Math.round(gamma(g) * 255)));
+  const B = Math.max(0, Math.min(255, Math.round(gamma(bl) * 255)));
+
+  if (isNaN(R) || isNaN(G) || isNaN(B)) {
+    return `rgb(128, 128, 128)`;
+  }
+
+  if (alpha === 1) {
+    return `rgb(${R}, ${G}, ${B})`;
+  } else {
+    return `rgba(${R}, ${G}, ${B}, ${alpha})`;
+  }
+};
+
+const convertOklchToRgb = (oklchStr: string): string => {
+  const oklchRegex = /oklch\(\s*([0-9.+-]+%?)\s*,?\s*([0-9.+-]+%?)\s*,?\s*([0-9.+-]+(?:deg|rad|turn)?%?)\s*(?:\/\s*([0-9.+-]+%?)|,\s*([0-9.+-]+%?))?\s*\)/gi;
+
+  return oklchStr.replace(oklchRegex, (match, lStr, cStr, hStr, aStr1, aStr2) => {
+    try {
+      let L = parseFloat(lStr);
+      if (lStr.includes('%')) L /= 100;
+
+      let C = parseFloat(cStr);
+      if (cStr.includes('%')) C /= 100;
+
+      let H = parseFloat(hStr);
+      if (hStr.includes('rad')) {
+        H = (parseFloat(hStr) * 180) / Math.PI;
+      } else if (hStr.includes('turn')) {
+        H = parseFloat(hStr) * 360;
+      }
+
+      const aStr = aStr1 || aStr2;
+      let alpha = 1;
+      if (aStr) {
+        alpha = parseFloat(aStr);
+        if (aStr.includes('%')) alpha /= 100;
+      }
+
+      const hr = (H * Math.PI) / 180;
+      const a = C * Math.cos(hr);
+      const b = C * Math.sin(hr);
+
+      return oklabToRgbString(L, a, b, alpha);
+    } catch {
+      return 'rgb(255, 255, 255)';
+    }
+  });
+};
+
+const convertOklabToRgb = (oklabStr: string): string => {
+  const oklabRegex = /oklab\(\s*([0-9.+-]+%?)\s*,?\s*([0-9.+-]+%?)\s*,?\s*([0-9.+-]+%?)\s*(?:\/\s*([0-9.+-]+%?)|,\s*([0-9.+-]+%?))?\s*\)/gi;
+
+  return oklabStr.replace(oklabRegex, (match, lStr, oklabA, oklabB, alphaStr1, alphaStr2) => {
+    try {
+      let L = parseFloat(lStr);
+      if (lStr.includes('%')) L /= 100;
+
+      let a = parseFloat(oklabA);
+      if (oklabA.includes('%')) a /= 100;
+
+      let b = parseFloat(oklabB);
+      if (oklabB.includes('%')) b /= 100;
+
+      const alphaValStr = alphaStr1 || alphaStr2;
+      let alpha = 1;
+      if (alphaValStr) {
+        alpha = parseFloat(alphaValStr);
+        if (alphaValStr.includes('%')) alpha /= 100;
+      }
+
+      return oklabToRgbString(L, a, b, alpha);
+    } catch {
+      return 'rgb(255, 255, 255)';
+    }
+  });
+};
+
+const cleanModernColors = (text: string): string => {
+  if (!text) return text;
+  let temp = text;
+  if (/oklch/i.test(temp)) {
+    temp = convertOklchToRgb(temp);
+  }
+  if (/oklab/i.test(temp)) {
+    temp = convertOklabToRgb(temp);
+  }
+  if (/lab\(/i.test(temp)) {
+    temp = temp.replace(/lab\([^)]+\)/gi, 'rgb(128,128,128)');
+  }
+  if (/lch\(/i.test(temp)) {
+    temp = temp.replace(/lch\([^)]+\)/gi, 'rgb(128,128,128)');
+  }
+  return temp;
+};
+
+const safeHtml2Canvas = async (element: HTMLElement, options: any) => {
+  const originalGetComputedStyle = window.getComputedStyle;
+
+  // Intercept getComputedStyle to bypass native oklch / oklab style evaluations
+  window.getComputedStyle = function (elt, pseudoElt) {
+    const style = originalGetComputedStyle(elt, pseudoElt);
+    return new Proxy(style, {
+      get(target, prop) {
+        if (prop === 'getPropertyValue') {
+          return function(property: string) {
+            const val = target.getPropertyValue(property);
+            if (typeof val === 'string' && (val.includes('oklch') || val.includes('oklab') || val.includes('lab(') || val.includes('lch('))) {
+              return cleanModernColors(val);
+            }
+            return val;
+          };
+        }
+        const val = target[prop as any];
+        if (typeof val === 'string' && (val.includes('oklch') || val.includes('oklab') || val.includes('lab(') || val.includes('lch('))) {
+          return cleanModernColors(val);
+        }
+        if (typeof val === 'function') {
+          return (val as any).bind(target);
+        }
+        return val;
+      }
+    });
+  };
+
+  const originalNodes: Array<{ node: HTMLStyleElement | HTMLLinkElement; parent: Node; nextSibling: Node | null }> = [];
+  const styleAndLinkElements = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]')) as Array<HTMLStyleElement | HTMLLinkElement>;
+  const tempStyles: HTMLStyleElement[] = [];
+
+  let combinedCss = '';
+
+  const processStyleSheet = (sheet: CSSStyleSheet) => {
+    try {
+      const rules = sheet.cssRules || sheet.rules;
+      if (!rules) return;
+      for (let i = 0; i < rules.length; i++) {
+        const rule = rules[i];
+        if (rule instanceof CSSImportRule && rule.styleSheet) {
+          processStyleSheet(rule.styleSheet);
+        } else if (rule.cssText) {
+          combinedCss += rule.cssText + '\n';
+        }
+      }
+    } catch (e) {
+      // Cross-origin rules or stylesheet loading permission exceptions: skip safely
+    }
+  };
+
+  // 1. Gather all CSS rules from existing loaded stylesheet sheets
+  const sheets = Array.from(document.styleSheets) as CSSStyleSheet[];
+  for (const sheet of sheets) {
+    processStyleSheet(sheet);
+  }
+
+  // 2. Detach original styles from DOM entirely so html2canvas's own stylesheet scanner never reads them
+  for (const el of styleAndLinkElements) {
+    if (el.parentNode) {
+      originalNodes.push({
+        node: el,
+        parent: el.parentNode,
+        nextSibling: el.nextSibling
+      });
+      el.parentNode.removeChild(el);
+    }
+  }
+
+  // 3. Inject our temporary cleaned Stylesheet
+  const sanitizedCss = cleanModernColors(combinedCss);
+  const tempStyle = document.createElement('style');
+  tempStyle.id = 'temp-clean-css-rules';
+  tempStyle.textContent = sanitizedCss;
+  document.head.appendChild(tempStyle);
+  tempStyles.push(tempStyle);
+
+  try {
+    const canvas = await html2canvas(element, options);
+    return canvas;
+  } finally {
+    // 4. Restore original window.getComputedStyle and stylesheet DOM nodes
+    window.getComputedStyle = originalGetComputedStyle;
+
+    for (const temp of tempStyles) {
+      temp.remove();
+    }
+
+    for (let i = originalNodes.length - 1; i >= 0; i--) {
+      const { node, parent, nextSibling } = originalNodes[i];
+      if (nextSibling) {
+        parent.insertBefore(node, nextSibling);
+      } else {
+        parent.appendChild(node);
+      }
+    }
+  }
+};
+
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
@@ -19,7 +234,7 @@ import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, Roll
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
-  const { data, properties, tenants, history, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances } = useStorage();
+  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs } = useStorage();
 
   // Modals state
   const [propertyModal, setPropertyModal] = useState<{ open: boolean; data?: Property }>({ open: false });
@@ -219,7 +434,7 @@ export default function App() {
     try {
       const element = document.getElementById(`receipt-${tenant.id}`);
       if (element) {
-        const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#020617' });
+        const canvas = await safeHtml2Canvas(element, { scale: 2, backgroundColor: '#020617' });
         const blob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/png'));
         
         const message = getWhatsAppMessage(tenant, prop);
@@ -335,7 +550,25 @@ export default function App() {
             </h1>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+             <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] shrink-0 select-none">
+               <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400">Support Overrides</span>
+               <button
+                 type="button"
+                 onClick={toggleSupportMasterMode}
+                 className={cn(
+                   "relative w-10 h-5 flex items-center rounded-full p-0.5 transition-colors duration-200 cursor-pointer",
+                   supportMasterOverrideMode ? "bg-amber-500" : "bg-slate-700"
+                 )}
+               >
+                 <div
+                   className={cn(
+                     "bg-white w-3.5 h-3.5 rounded-full shadow-md transform transition-transform duration-150",
+                     supportMasterOverrideMode ? "translate-x-5" : "translate-x-0"
+                   )}
+                 />
+               </button>
+             </div>
              <div className="flex gap-1 mr-4">
                <button 
                 onClick={handleUndo} 
@@ -381,6 +614,30 @@ export default function App() {
              )}
           </div>
         </header>
+
+        {supportMasterOverrideMode && (
+          <div className="w-full bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-amber-400">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 animate-pulse text-amber-500" />
+              <div>
+                <h4 className="text-sm font-bold">Support Override Console Active</h4>
+                <p className="text-[10px] text-amber-500/70 mt-0.5 uppercase tracking-wide">You can manually alter any past/present bill fields or arrears downstream.</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  recalculateBalances();
+                  alert('Forced Sync Success: All historical arrears recalculations solved and downstream payments balanced!');
+                }}
+                className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold uppercase tracking-widest text-[9px] rounded-xl hover:bg-amber-400 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <ArrowDownUp className="w-3 h-3" />
+                Sync Late Payments Now
+              </button>
+            </div>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           <motion.div
@@ -439,6 +696,10 @@ export default function App() {
                 cleanOldHistory={cleanOldHistory}
                 dataStats={dataStats}
                 recalculateBalances={recalculateBalances}
+                auditLogs={auditLogs}
+                supportMasterOverrideMode={supportMasterOverrideMode}
+                toggleSupportMasterMode={toggleSupportMasterMode}
+                clearAuditLogs={clearAuditLogs}
               />
             )}
             {currentView === 'history' && (
@@ -513,6 +774,9 @@ export default function App() {
         onClose={() => setHistoryModal({ open: false })}
         entry={historyModal.data}
         onUpdateTenant={updateHistoryTenant}
+        supportMasterOverrideMode={supportMasterOverrideMode}
+        addAuditLog={addAuditLog}
+        recalculateBalances={recalculateBalances}
       />
 
       <RolloverPromptModal 
@@ -777,7 +1041,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
       const element = document.getElementById(`receipt-${tenant.id}`);
       if (!element) throw new Error("Receipt element not found");
       
-      const canvas = await html2canvas(element, { 
+      const canvas = await safeHtml2Canvas(element, { 
         scale: 2, 
         useCORS: true, 
         logging: true,
@@ -805,7 +1069,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
       for (const tenant of tenants) {
         const element = document.getElementById(`receipt-${tenant.id}`);
         if (element) {
-          const canvas = await html2canvas(element, { 
+          const canvas = await safeHtml2Canvas(element, { 
             scale: 2, 
             useCORS: true, 
             logging: false,
@@ -1195,7 +1459,7 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
   );
 }
 
-function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances }: any) {
+function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs }: any) {
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1283,6 +1547,113 @@ function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStat
               }
             }} className="w-full py-2 bg-emerald-500/10 text-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all">Recalculate All</button>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-6 border-t border-white/5 pt-10 bg-gradient-to-b from-amber-500/[0.02] to-transparent p-6 rounded-3xl border border-amber-500/5">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
+              Admin Master Support Control Panel
+              <span className={cn(
+                "w-1.5 h-1.5 rounded-full animate-pulse",
+                supportMasterOverrideMode ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]" : "bg-slate-500"
+              )} />
+            </h3>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">Authorized Audit Log & Override Engine</p>
+          </div>
+          <div className="flex items-center gap-3 bg-slate-900 border border-white/5 px-4 py-2 rounded-2xl select-none shrink-0">
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Master Override Toggle</span>
+            <button
+              onClick={toggleSupportMasterMode}
+              className={cn(
+                "relative w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer",
+                supportMasterOverrideMode ? "bg-amber-500" : "bg-slate-700"
+              )}
+            >
+              <div
+                className={cn(
+                  "bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200",
+                  supportMasterOverrideMode ? "translate-x-6" : "translate-x-0"
+                )}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-amber-500/20 transition-all flex flex-col justify-between">
+            <div>
+              <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400 mb-3">
+                <ArrowDownUp className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-white">Manual Balance Sync & Override</h4>
+              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
+                Force synchronizes late payments and carryovers. Recalculates all balances downstream starting from any manual updates.
+              </p>
+            </div>
+            <button 
+              onClick={() => {
+                recalculateBalances();
+                alert('Verification success: Late payments synced and outstanding balances balanced downstream!');
+              }} 
+              className="w-full mt-4 py-2 bg-amber-500/10 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
+            >
+              Sync Late Payments Now
+            </button>
+          </div>
+
+          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-blue-500/20 transition-all flex flex-col justify-between">
+            <div>
+              <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 mb-3">
+                <Clipboard className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-white">Security & Audit Status</h4>
+              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
+                Total Manual Alterations Recorded: {auditLogs.length} logs
+              </p>
+            </div>
+            <button 
+              disabled={auditLogs.length === 0}
+              onClick={() => {
+                if(confirm('Clear all historical system override logs?')) {
+                  clearAuditLogs();
+                }
+              }} 
+              className="w-full mt-4 py-2 bg-slate-850 text-slate-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500/20 hover:text-rose-400 transition-all disabled:opacity-20 cursor-pointer"
+            >
+              Clear Audit Logs
+            </button>
+          </div>
+        </div>
+
+        {/* Audit Details Ledger Grid */}
+        <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4 bg-slate-900/30">
+          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-400 flex items-center gap-2">
+            Archived Adjustment Logs
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-700 animate-pulse" />
+          </p>
+          {auditLogs.length === 0 ? (
+            <p className="text-[11px] text-slate-600 italic">No manual billing overrides have been recorded. System is fully synchronized chronologically.</p>
+          ) : (
+            <div className="max-h-60 overflow-y-auto space-y-2 rounded-xl pr-2">
+              {auditLogs.map((log: any) => (
+                <div key={log.id} className="p-3 bg-slate-950 border border-white/5 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs group hover:bg-white/[0.01]">
+                  <div className="space-y-1">
+                    <p className="text-white font-bold text-[11px] flex items-center gap-2">
+                      {log.tenantName} 
+                      <span className="w-1 h-1 rounded-full bg-slate-700" />
+                      <span className="text-blue-400 font-normal">{log.month}</span>
+                    </p>
+                    <p className="text-[10px] text-slate-500 font-mono">
+                      Field: <span className="text-slate-300 font-semibold">{log.fieldName}</span> | Value Updated: <span className="text-rose-400 line-through">{log.oldValue}</span> → <span className="text-emerald-400 font-bold">{log.newValue}</span>
+                    </p>
+                  </div>
+                  <span className="text-[9px] text-slate-600 font-mono self-start sm:self-center bg-slate-900 border border-white/5 px-2 py-0.5 rounded-md whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

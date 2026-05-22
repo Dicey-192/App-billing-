@@ -16,6 +16,24 @@ export interface Property {
   defaultExpenses: ExpenseItem[];
 }
 
+export interface ManualOverrides {
+  openingBalance?: number;
+  totalDue?: number;
+  paidAmount?: number;
+  isPaid?: boolean;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  month: string; // "May 2026" or "Current"
+  timestamp: number;
+  fieldName: string;
+  oldValue: string;
+  newValue: string;
+}
+
 export interface Tenant {
   id: string;
   propertyId: string;
@@ -34,6 +52,7 @@ export interface Tenant {
   expenses: ExpenseItem[];
   moveInDate?: string;
   updatedAt: number;
+  manualOverrides?: ManualOverrides;
 }
 
 export interface PaymentRecord {
@@ -64,4 +83,7 @@ export interface AppData {
   activeMonth?: string;
   dismissedMonth?: string;
   lastBackupAt?: number;
+  auditLogs?: AuditLogEntry[];
+  supportMasterOverrideMode?: boolean;
 }
+
