@@ -11,6 +11,7 @@ interface ReceiptTemplateProps {
 
 export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tenant, month }) => {
   const billing = getTenantBillingDetails(tenant, property);
+  const outstandingBalance = billing.outstandingBalance;
 
   const today = new Date();
   const nepaliDateStr = new NepaliDate(today).format('YYYY-MM-DD');
@@ -28,200 +29,146 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
   };
   const receiptId = getReceiptId(tenant.id, month);
 
-  // Due date (exactly 10 days after payment generation date - like April 24 -> May 4)
+  // Due date (exactly 10 days after cycle launch date)
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 10);
   const dueDateStr = formatDate(dueDate);
 
+  // Parse expenses for ledger breakdown
+  const expensesList = tenant.expenses || [];
+  
+  // Isolate Maintenance
+  const maintenanceExpense = expensesList.find(
+    e => e.name.toLowerCase().includes('maintenance') || e.name.toLowerCase().includes('service')
+  );
+  const maintenanceAmount = billing.otherFees; // Standardize on billing details otherFees for consistent math
+  
+  // Isolate other custom charges
+  const otherExpenses = expensesList.filter(
+    e => !maintenanceExpense || e.id !== maintenanceExpense.id
+  );
+  
+  // Subtotal = Rent + Maintenance + Electricity + Water (excluding opening balance and extra items)
+  const subTotal = billing.baseRent + maintenanceAmount + billing.electricityCharges + billing.waterCharges;
+  
+  // Additional Charges: Opening Balance / Balance Forward
+  const balanceForward = billing.openingBalance;
+  const additionalChargesTotal = balanceForward; // Opening Balance acts as the classical balance forward
+
   return (
     <div 
       id={`receipt-${tenant.id}`}
-      className="w-[800px] p-2 relative overflow-hidden"
+      className="receipt-card w-full max-w-[800px] mx-auto p-6 md:p-8 pb-8 relative overflow-hidden bg-white text-[#0F172A] rounded-2xl shadow-xl border border-slate-200 select-none print:shadow-none print:border-slate-300 print:bg-white"
       style={{ 
         fontFamily: '"Inter", sans-serif',
-        backgroundColor: '#020617', // slate-950
-        color: '#ffffff'
       }}
     >
-      {/* Background Accents */}
-      <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[80px]" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)' }} />
-      <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full blur-[80px]" style={{ backgroundColor: 'rgba(147, 51, 234, 0.1)' }} />
+      {/* Background Watermark (Hidden below 600px and on printed sheets) */}
+      <div 
+        className="hidden md:block absolute top-[40%] left-[25%] text-slate-900/[0.03] text-[7rem] font-black pointer-events-none select-none tracking-[0.2em] -rotate-12 uppercase font-serif print:hidden"
+      >
+        STATEMENT
+      </div>
 
-      <div className="relative border rounded-[3rem] overflow-hidden shadow-2xl" style={{ borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.02)', backdropFilter: 'blur(40px)' }}>
-        
-        {/* Brand Header Block (top rounded) */}
-        <div 
-          className="p-10 border-b text-center relative" 
-          style={{ 
-            borderColor: 'rgba(255,255,255,0.1)', 
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            backgroundImage: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.2))'
-          }}
-        >
-          <p className="text-[14px] font-mono tracking-[0.2em] uppercase mb-1" style={{ color: '#64748b' }}>
-            {receiptId}
-          </p>
-          <h2 className="text-5xl font-extrabold tracking-widest uppercase mb-3" style={{ color: '#ffffff' }}>
-            {tenant.name}
+      {/* Header Grid */}
+      <div className="flex justify-between items-end mb-6 border-b-2 border-slate-200 pb-4 print:border-slate-300">
+        <div>
+          <h2 className="text-2xl font-black tracking-widest font-serif text-[#0F172A] uppercase">
+            STATEMENT
           </h2>
-          <p className="text-sm font-semibold tracking-wide text-slate-400">
-            {englishDateStr} • {nepaliDateStr}
+          <span className="text-xs uppercase tracking-widest text-slate-500 font-mono font-bold mt-1 block">
+            ID: #{receiptId}
+          </span>
+        </div>
+
+        <div className="text-right">
+          <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold font-mono mb-0.5">
+            DATE OF ISSUE
           </p>
+          <span className="text-xs md:text-sm text-slate-800 font-mono font-semibold">
+            {englishDateStr} &bull; BS {nepaliDateStr}
+          </span>
         </div>
+      </div>
 
-        {/* Content Body */}
-        <div className="p-10 space-y-8">
+      {/* Tenant Profile Context */}
+      <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 print:bg-slate-50 print:border-slate-200">
+        <div className="space-y-1">
+          <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-0.5">Prepared For</p>
+          <p className="text-xl md:text-2xl font-extrabold font-serif text-[#0F172A] tracking-tight">{tenant.name}</p>
+          <p className="text-xs md:text-sm text-slate-600 font-semibold">{property.address} &bull; Room {tenant.roomNumber}</p>
+        </div>
+        <div className="text-right flex flex-col justify-center items-end">
+          <div>
+            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-0.5">Billing Period</p>
+            <p className="text-sm md:text-base font-bold text-[#0F172A] uppercase tracking-wide">{month === "Current Cycle" ? (month) : month}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Financial Statement Section */}
+      <div className="mb-2">
+        <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 font-mono">
+          FINANCIAL BREAKDOWN
+        </h4>
+        <div className="space-y-3.5">
           
-          {/* Property Info Badge */}
-          <div className="flex justify-between items-center bg-white/[0.01] border border-white/5 rounded-2xl px-5 py-3 text-sm">
-            <span className="text-[12px] font-bold uppercase tracking-[0.14em] text-slate-500">Property Origin</span>
-            <span className="text-slate-300 font-medium">{property.name} &bull; Room #{tenant.roomNumber}</span>
+          {/* Base Rent Row */}
+          <div className="flex justify-between items-center border-b border-slate-200/80 pb-2 print:border-slate-100 text-[#0F172A]">
+            <span className="text-slate-700 font-semibold text-sm md:text-base">Rent</span>
+            <span className="font-extrabold font-mono text-base md:text-lg">{formatCurrency(billing.baseRent)}</span>
           </div>
 
-          {/* Charges Section Grid (vertically stacked columns, left-aligned) */}
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-x-12 gap-y-6">
-              {/* Row 1, Col 1: Base Rent */}
-              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <span className="text-slate-400 font-medium text-base">Base Rent</span>
-                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.baseRent)}</span>
-              </div>
-
-              {/* Row 1, Col 2: Maintenance */}
-              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <span className="text-slate-400 font-medium text-base">Maintenance</span>
-                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.otherFees)}</span>
-              </div>
-
-              {/* Row 2, Col 1: Electricity with sub-line */}
-              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <div>
-                  <span className="text-slate-400 font-medium text-base block">Electricity</span>
-                  <span className="text-[13px] text-slate-500 font-mono block mt-0.5">
-                    {billing.elecUnits} U x {formatCurrency(property.electricRate)}/U
-                  </span>
-                </div>
-                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.electricityCharges)}</span>
-              </div>
-
-              {/* Row 2, Col 2: Water with sub-line */}
-              <div className="flex justify-between items-baseline border-b pb-3" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <div>
-                  <span className="text-slate-400 font-medium text-base block">Water</span>
-                  <span className="text-[13px] text-slate-500 font-mono block mt-0.5">
-                    {billing.waterUnits} U x {formatCurrency(property.waterRate)}/U
-                  </span>
-                </div>
-                <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.waterCharges)}</span>
-              </div>
+          {/* Electricity Meter Row */}
+          <div className="flex justify-between items-center border-b border-slate-200/80 pb-2 print:border-slate-100 text-[#0F172A]">
+            <div className="space-y-0.5">
+              <span className="text-slate-700 font-semibold text-sm md:text-base">Electricity Fee</span>
+              <span className="text-xs text-slate-500 font-mono block">
+                Reading: {tenant.prevElecReading} to {tenant.currElecReading} ({billing.elecUnits} Units @ {formatCurrency(property.electricRate)}/U)
+              </span>
             </div>
-
-            {/* Row 3: Previous Dues */}
-            <div className="flex justify-between items-baseline pt-2 pb-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-              <span className="text-slate-400 font-medium text-base">Previous Dues</span>
-              <span className="font-bold text-white text-xl font-mono">{formatCurrency(billing.openingBalance)}</span>
-            </div>
+            <span className="font-extrabold font-mono text-base md:text-lg">{formatCurrency(billing.electricityCharges)}</span>
           </div>
 
-          {/* METER DETAIL INSIGHT (Clear column headers and value alignment) */}
-          <div className="rounded-3xl border p-6 bg-white/[0.01]" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-            <p className="text-[12px] font-extrabold uppercase tracking-[0.2em] mb-4 text-slate-500">
-              Meter Detail Insight
-            </p>
-            
-            <div className="grid grid-cols-4 text-left text-[13px] font-bold uppercase tracking-[0.14em] text-slate-500 pb-2 border-b border-white/5 mb-3">
-              <div>Category</div>
-              <div className="text-right">Previous</div>
-              <div className="text-right">Current</div>
-              <div className="text-right">Units</div>
+          {/* Water Meter Row */}
+          <div className="flex justify-between items-center border-b border-slate-200/80 pb-2 print:border-slate-100 text-[#0F172A]">
+            <div className="space-y-0.5">
+              <span className="text-slate-700 font-semibold text-sm md:text-base">Water Fee</span>
+              <span className="text-xs text-slate-500 font-mono block">
+                Reading: {tenant.prevWaterReading} to {tenant.currWaterReading} ({billing.waterUnits} Units @ {formatCurrency(property.waterRate)}/U)
+              </span>
             </div>
-            
-            <div className="space-y-4">
-              {/* Electricity Meter Row */}
-              <div className="grid grid-cols-4 text-base items-center">
-                <div className="font-semibold text-white">Electricity</div>
-                <div className="text-right font-mono text-slate-400">{tenant.prevElecReading}</div>
-                <div className="text-right font-mono text-slate-400">{tenant.currElecReading}</div>
-                <div className="text-right font-mono font-bold text-blue-400">{billing.elecUnits}</div>
-              </div>
-              
-              {/* Water Meter Row */}
-              <div className="grid grid-cols-4 text-base items-center">
-                <div className="font-semibold text-white">Water</div>
-                <div className="text-right font-mono text-slate-400">{tenant.prevWaterReading}</div>
-                <div className="text-right font-mono text-slate-400">{tenant.currWaterReading}</div>
-                <div className="text-right font-mono font-bold text-blue-400">{billing.waterUnits}</div>
-              </div>
-            </div>
+            <span className="font-extrabold font-mono text-base md:text-lg">{formatCurrency(billing.waterCharges)}</span>
           </div>
 
-          {/* Net Amount Due & Due By Section (Prominent, matching layout) */}
-          <div 
-            className="rounded-3xl border p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6" 
-            style={{ 
-              borderColor: 'rgba(59, 130, 246, 0.2)', 
-              backgroundColor: 'rgba(37, 99, 235, 0.05)' 
-            }}
-          >
-            <div>
-              <p className="text-[12px] font-extrabold uppercase tracking-[0.15em] text-blue-400 mb-1">
-                Net Amount Due
-              </p>
-              <p className="text-[40px] font-black font-mono text-white tracking-tight">
-                {formatCurrency(billing.outstandingBalance)}
-              </p>
-            </div>
-            <div className="text-left sm:text-right">
-              <p className="text-[12px] font-extrabold uppercase tracking-[0.15em] text-slate-500 mb-1">
-                Due By
-              </p>
-              <p className="text-xl font-black text-white uppercase tracking-wider">
-                {dueDateStr}
-              </p>
-            </div>
+          {/* Subtotal Separator */}
+          <div className="flex justify-between items-center border-b-2 border-slate-300 pb-2.5 pt-1.5 text-[#0F172A] font-semibold bg-slate-100/30 px-3 py-1.5 rounded-lg">
+            <span className="uppercase tracking-widest text-[10px] md:text-xs font-black text-slate-500">Current Cycle Subtotal</span>
+            <span className="font-extrabold font-mono text-base md:text-lg">{formatCurrency(subTotal)}</span>
           </div>
 
-        </div>
-
-        {/* Footer (Scan to Pay left, secure info right) */}
-        <div 
-          className="px-10 py-8 border-t flex flex-col sm:flex-row justify-between items-center gap-6" 
-          style={{ 
-            borderColor: 'rgba(255,255,255,0.05)', 
-            backgroundColor: 'rgba(255,255,255,0.01)' 
-          }}
-        >
-          <div className="flex flex-col items-center sm:items-start gap-2.5">
-            <span className="text-[12px] font-extrabold uppercase tracking-[0.2em] text-slate-500">
-              Scan To Pay
+          {/* Additional Charges (Balance Forward / Carry-overs) */}
+          <div className="flex justify-between items-center border-b border-slate-200/80 pb-2 pt-0.5 text-[#0F172A]">
+            <div className="space-y-0.5">
+              <span className="text-slate-700 font-semibold text-sm md:text-base">Additional Charges / Arrears</span>
+              {balanceForward !== 0 && (
+                <span className="text-xs text-slate-500 font-mono block">
+                  {balanceForward > 0 ? 'Balance Forward (Arrears)' : 'Credit Balance Forward'}: {formatCurrency(balanceForward)}
+                </span>
+              )}
+            </div>
+            <span className="font-extrabold font-mono text-base md:text-lg">
+              {formatCurrency(additionalChargesTotal)}
             </span>
-            {property.qrCodeDataUrl ? (
-              <div className="relative group">
-                <div className="absolute inset-0 rounded-2xl blur-xl transition-all" style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)' }} />
-                <img 
-                  src={property.qrCodeDataUrl} 
-                  alt="PaymentQR" 
-                  className="relative w-28 h-28 bg-white p-2 rounded-2xl border" 
-                  style={{ borderColor: 'rgba(255,255,255,0.1)' }} 
-                />
-              </div>
-            ) : (
-              <div className="w-28 h-28 border-2 border-dashed rounded-2xl flex items-center justify-center italic text-[9px] text-center p-3" style={{ borderColor: 'rgba(255,255,255,0.1)', color: '#475569' }}>
-                QR PORTAL<br/>NOT CONFIGURED
-              </div>
-            )}
           </div>
-          
-          <div className="text-center sm:text-right space-y-1">
-            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">
-              Secured Digital Receipt
-            </p>
-            <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-600">
-              System Generated
-            </p>
-          </div>
-        </div>
 
+          {/* Total Amount Due Block (Beautiful Highlights) */}
+          <div className="flex justify-between items-center p-3 md:p-4 bg-slate-100 rounded-xl border border-slate-300 mt-6 select-none print:bg-slate-50 print:border-slate-300">
+            <span className="font-sans text-sm md:text-base font-black text-[#0F172A] tracking-wider uppercase">Total Amount Due</span>
+            <span className="font-black font-mono text-xl md:text-2xl text-[#0F172A] tracking-tight">{formatCurrency(billing.totalDue)}</span>
+          </div>
+
+        </div>
       </div>
     </div>
   );

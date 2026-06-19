@@ -473,34 +473,67 @@ export const BatchReadingModal: React.FC<{
 export const RolloverPromptModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (carryForward: boolean) => void;
   month: string;
 }> = ({ isOpen, onClose, onConfirm, month }) => {
+  const [carryForwardUtilities, setCarryForwardUtilities] = useState(true);
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New Month Detected">
+    <Modal isOpen={isOpen} onClose={onClose} title="Billing Cycle Rollover">
       <div className="space-y-6">
-        <div className="p-6 bg-blue-500/10 rounded-2xl border border-blue-500/20 text-center space-y-4">
-          <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto text-blue-400">
+        <div className="p-6 bg-[#76FF03]/5 rounded-2xl border border-[#76FF03]/10 text-center space-y-4">
+          <div className="w-16 h-16 bg-[#76FF03]/10 rounded-full flex items-center justify-center mx-auto text-[#76FF03]">
             <Calendar className="w-8 h-8" />
           </div>
           <div className="space-y-1">
-            <h4 className="text-xl font-bold text-white">Roll over to {month}?</h4>
-            <p className="text-sm text-slate-400">
-              Archiving previous records and resetting meters for the new month.
+            <h4 className="text-xl font-bold text-white uppercase tracking-wide">Roll over to {month}?</h4>
+            <p className="text-xs text-slate-400">
+              This starts a new billing month, archives all current records, and synchronizes accounts.
             </p>
           </div>
         </div>
 
+        {/* Data Carry Forward Settings Selector Panel */}
+        <div className="bg-[#1A1B20]/60 p-4.5 rounded-2xl border border-white/5 space-y-3">
+          <span className="text-[9px] uppercase tracking-widest font-black text-[#8A8D98]">FORWARD PRESETS</span>
+          
+          <label className="flex items-start gap-3 cursor-pointer group">
+            <div className="pt-0.5">
+              <input
+                type="checkbox"
+                checked={carryForwardUtilities}
+                onChange={(e) => setCarryForwardUtilities(e.target.checked)}
+                className="sr-only"
+              />
+              <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${carryForwardUtilities ? "bg-[#76FF03] border-[#76FF03] text-slate-950" : "bg-transparent border-white/20 text-transparent"}`}>
+                <Check className="w-3.5 h-3.5 font-bold" />
+              </div>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-xs font-bold text-white group-hover:text-[#76FF03] transition-colors">Carry Forward Utilities & Readings</p>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                Automatically copy final electric and water meter readings and unpaid utility balances to the new month as active starting points.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        <p className="text-[10px] text-slate-500 italic text-center leading-normal">
+          Clicking <strong>Later</strong> pauses this ledger transition and retains current active month logs without data forwarding.
+        </p>
+
         <div className="pt-4 flex gap-3">
           <button 
             onClick={onClose} 
-            className="btn-secondary flex-1 py-3 text-xs uppercase font-bold tracking-widest"
+            className="btn-secondary flex-1 py-3.5 text-[10px] uppercase font-black tracking-widest cursor-pointer"
+            title="Defer rollover and pause details forwarding"
           >
             Later
           </button>
           <button 
-            onClick={onConfirm} 
-            className="btn-primary flex-1 py-3 text-xs uppercase font-bold tracking-widest"
+            onClick={() => onConfirm(carryForwardUtilities)} 
+            className="btn-primary flex-1 py-3.5 text-[10px] uppercase font-black tracking-widest cursor-pointer"
+            title="Confirm rollover and forward billing data"
           >
             Confirm
           </button>

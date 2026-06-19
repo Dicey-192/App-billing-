@@ -45,7 +45,9 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
   const totalDue = tenant.manualOverrides?.totalDue !== undefined ? tenant.manualOverrides.totalDue : (baseRent + electricityCharges + waterCharges + otherFees + openingBalance);
   
   const paidAmount = tenant.manualOverrides?.paidAmount !== undefined ? tenant.manualOverrides.paidAmount : (tenant.paidAmount ?? 0);
-  const outstandingBalance = Math.max(0, totalDue - paidAmount);
+  
+  // Outstanding balance (negative values represent credits)
+  const outstandingBalance = totalDue - paidAmount;
   
   return {
     baseRent,

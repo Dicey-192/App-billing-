@@ -1,94 +1,234 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  
-  --color-brand-50: #f0f9ff;
-  --color-brand-100: #e0f2fe;
-  --color-brand-200: #bae6fd;
-  --color-brand-300: #7dd3fc;
-  --color-brand-400: #38bdf8;
-  --color-brand-500: #0ea5e9;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-  --color-brand-800: #1e40af;
-  --color-brand-900: #1e3a8a;
-  
-  --color-slate-950: #020617;
-}
-
+/* Base style resets & luxury system variables */
 @layer base {
+  :root {
+    /* Precise visual spec variables matching the requested high-polished FinTech SaaS theme */
+    --bg-page: #121316; /* deep matte charcoal, pure solid finish, no gradients */
+    --text-primary: #FFFFFF; /* crisp clean white */
+    --text-secondary: #8A8D98; /* muted ash grey */
+    --color-accent: #76FF03; /* vibrant electric neon lime green */
+    --card-bg: #1A1B20; /* soft dark obsidian */
+    --input-bg: #282A30; /* muted dark grey for inputs / inactive elements */
+    --border-color: rgba(255, 255, 255, 0.05); /* subtle 1px border opacity for vector depth */
+    --gold-border: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Light adaptive theme (premium cream and ivory) */
+    @media (prefers-color-scheme: light) {
+    :root {
+      --bg-page: #FAF6EB; /* smooth luxurious cream surface */
+      --text-primary: #1C1917; /* rich, deep warm charcoal */
+      --text-secondary: #57535E;
+      --card-bg: rgba(255, 255, 255, 0.82);
+      --gold-border: rgba(118, 255, 3, 0.2);
+      --input-bg: rgba(255, 255, 255, 0.92);
+    }
+  }
+
   body {
-    @apply font-sans bg-slate-950 text-slate-100 antialiased selection:bg-brand-500/30;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    @apply antialiased selection:bg-[#76FF03]/30;
   }
 }
 
+/* Custom premium-crafted classes conforming to FinTech Bento Specs */
 @layer components {
+  /* Soft dark obsidian Tier 1 panels with flat clean vector depth and 24px heavy rounded corners */
   .glass-panel {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    box-shadow: none;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
   
-  .card {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl transition-all;
-  }
-  
-  .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed active:scale-95;
-  }
-  
-  .btn-primary {
-    @apply bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20;
-  }
-  
-  .btn-secondary {
-    @apply bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10 backdrop-blur-md;
-  }
-  
-  .btn-ghost {
-    @apply hover:bg-white/5 text-slate-400 hover:text-slate-100 rounded-lg transition-colors;
-  }
-  
-  .input {
-    @apply w-full px-4 py-2 bg-slate-900/50 border border-white/10 rounded-xl text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all;
-  }
-  
-  .label {
-    @apply block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1;
+  .glass-panel:hover {
+    border-color: rgba(118, 255, 3, 0.3);
   }
 
-  /* Print specific styles */
+  /* High contrast light contrast block canvas (solid stark white with absolute pure black details) */
+  .neo-contrast-light-block {
+    background: #FFFFFF;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 24px;
+    color: #000000;
+  }
+
+  .neo-contrast-light-block .text-slate-400 {
+    color: #555866;
+  }
+  .neo-contrast-light-block .text-slate-500 {
+    color: #6C7080;
+  }
+  .neo-contrast-light-block .bg-slate-900\/50 {
+    background-color: rgba(0, 0, 0, 0.04);
+    color: #000000;
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  /* Neo-Tactile Capsule Pill Containers */
+  .neo-pill-capsule {
+    background: #282A30;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 9999px;
+    padding: 4px;
+  }
+
+  .neo-pill-btn {
+    @apply rounded-full px-5 py-2 text-[10px] font-bold uppercase tracking-wider transition-all duration-300;
+  }
+
+  .neo-pill-btn-active {
+    background: var(--color-accent);
+    color: #121316;
+    box-shadow: 0 2px 10px rgba(118, 255, 3, 0.2);
+  }
+
+  .neo-pill-btn-inactive {
+    @apply text-slate-400 hover:text-white hover:bg-white/[0.03];
+  }
+
+  .card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    box-shadow: none;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  
+  .card:hover {
+    border-color: rgba(118, 255, 3, 0.2);
+  }
+
+  /* High Fashion Neon Accent Buttons & Dark Grey secondary elements */
+  .btn {
+    @apply inline-flex items-center justify-center px-6 py-3.5 rounded-full font-bold uppercase tracking-widest transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 text-[10px] font-sans;
+    min-height: 44px;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    color: #121316;
+    border: 1px solid var(--color-accent);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(118, 255, 3, 0.35);
+  }
+
+  .btn-secondary {
+    background-color: #282A30;
+    color: #FFFFFF;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: all 0.3s ease;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: #383B43;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-ghost {
+    @apply text-slate-400 hover:text-white hover:bg-white/[0.04] rounded-full transition-all font-mono text-[9px] uppercase tracking-widest font-bold;
+  }
+
+  /* Fields inputs themed as Muted dark grey (#282A30) */
+  .input {
+    @apply w-full px-4 py-3 bg-[#282A30] border rounded-full text-white placeholder:text-slate-500 transition-all font-medium text-xs tracking-wide;
+    border-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .input:focus {
+    @apply outline-none;
+    border-color: var(--color-accent);
+  }
+
+  .label {
+    @apply block text-[10px] font-black uppercase tracking-[0.25em] mb-2 ml-1 text-[#8A8D98] font-mono;
+  }
+
+  /* Staggered load animation utility */
+  .animate-fade-up {
+    animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Single-spin utility for active toggles */
+  .animate-spin-once {
+    animation: spinOnce 0.4s ease-out;
+  }
+
+  @keyframes spinOnce {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(90deg); }
+  }
+
+  /* Exquisite Custom Scrollbars for Receipts and Chat lists */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(212, 175, 55, 0.2);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(212, 175, 55, 0.4);
+  }
+
+  /* True Clean Statement Print CSS rules */
   @media print {
-    .no-print {
+    .no-print,
+    #assistant-trigger,
+    aside,
+    nav {
       display: none !important;
     }
-    .print-only {
-      display: block !important;
-    }
+    
     body {
-      background: white !important;
-      color: black !important;
+      background: #FFFFFF !important;
+      color: #0F172A !important;
     }
-    .page-break {
-      page-break-after: always;
+
+    .receipt-card {
+      border: 1px solid #CBD5E1 !important;
+      background: #FFFFFF !important;
+      color: #0F172A !important;
+      box-shadow: none !important;
+      margin: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      position: static !important;
+      padding: 0 !important;
     }
-    table {
-      page-break-inside: auto;
-    }
-    tr {
-      page-break-inside: avoid;
-      page-break-after: auto;
-    }
-    thead {
-      display: table-header-group;
+
+    .receipt-card [class*="absolute"] {
+      display: none !important;
     }
   }
 }
-

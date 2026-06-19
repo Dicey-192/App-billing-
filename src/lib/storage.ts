@@ -119,19 +119,33 @@ export function useStorage() {
   }, []);
 
   const rollover = useCallback((month: string, historyEntries: BillHistoryEntry[], updates: { id: string; updates: Partial<Tenant> }[]) => {
+    console.log('[ROLLOVER] Invoked with month:', month, 'history entries count:', historyEntries.length, 'updates count:', updates.length);
     setData(prev => {
+      console.log('[ROLLOVER] Entering state change. prev activeMonth:', prev?.activeMonth);
+      const currentHistory = prev?.history || [];
+      const currentTenants = prev?.tenants || [];
+      
       const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
+      console.log('[ROLLOVER] tenantMap constructed successfully. Mapping tenants...');
+      
+      const updatedTenants = currentTenants.map(t => {
+        const u = tenantMap.get(t.id);
+        if (u) {
+          console.log('[ROLLOVER] Updating tenant:', t.id, t.name, 'with:', u);
+        }
+        return u ? { ...t, ...u, updatedAt: Date.now() } : t;
+      });
+
+      console.log('[ROLLOVER] Tenants mapped successfully. Returning new state.');
       return {
         ...prev,
         activeMonth: month,
         dismissedMonth: undefined,
-        history: [...historyEntries, ...prev.history],
-        tenants: prev.tenants.map(t => {
-          const u = tenantMap.get(t.id);
-          return u ? { ...t, ...u, updatedAt: Date.now() } : t;
-        }),
+        history: [...historyEntries, ...currentHistory],
+        tenants: updatedTenants,
       };
     });
+    console.log('[ROLLOVER] State setter scheduled successfully.');
   }, []);
 
   const setActiveMonth = useCallback((month: string) => {
@@ -153,6 +167,11 @@ export function useStorage() {
       const processedHistory = newHistory.map(entry => {
         const prop = prev.properties.find(p => p.id === entry.propertyId);
         if (!prop) return entry;
+
+        if (!entry.snapshot || !entry.snapshot.tenants || !Array.isArray(entry.snapshot.tenants)) {
+          console.warn('[RECALCULATE] Missing snapshot or tenants array for entry:', entry.id);
+          return entry;
+        }
 
         const updatedTenants = entry.snapshot.tenants.map(t => {
           // Determine openingBalance
@@ -201,7 +220,10 @@ export function useStorage() {
             isPaid = paid >= totalDue;
           }
           
-          const remaining = isPaid ? 0 : Math.max(0, totalDue - paid);
+          // FIX (Rollover & Credit Balance Correctness):
+          // Allow negative remaining balances so overpayments are carried forward as a credit (negative previousDues).
+          // If the manager manually overrode isPaid to true, we treat a positive remaining balance as 0 (forgiving the diff).
+          const remaining = isPaid && (totalDue - paid > 0) ? 0 : (totalDue - paid);
           
           tenantBalances.set(t.id, remaining);
 

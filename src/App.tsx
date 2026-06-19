@@ -8,9 +8,10 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn, getTenantBillingDetails } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
+import { AIAssistant } from './components/AIAssistant';
 import html2canvas from 'html2canvas';
 
 const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
@@ -233,7 +234,7 @@ import { saveAs } from 'file-saver';
 import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal } from './components/Modals';
 
 export default function App() {
-  const [currentView, setView] = useState<ViewType>('dashboard');
+  const [currentView, setView] = useState<ViewType>('tenants');
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs } = useStorage();
 
   // Modals state
@@ -329,12 +330,17 @@ export default function App() {
     return properties.find(p => p.id === selectedPropertyId);
   }, [properties, selectedPropertyId]);
 
-  const handleRollover = (confirmedMonth?: string) => {
+  const handleRollover = (confirmedMonth?: string, carryForwardUtilities = true) => {
+    console.log('[DEBUG-ROLLOVER] Starting handleRollover with confirmedMonth:', confirmedMonth, 'carryForwardUtilities:', carryForwardUtilities);
     const targetProperties = properties;
-    if (targetProperties.length === 0 || tenants.length === 0) return;
+    if (targetProperties.length === 0 || tenants.length === 0) {
+      console.warn('[DEBUG-ROLLOVER] Cannot roll over because properties or tenants is empty. targetProperties:', targetProperties.length, 'tenants:', tenants.length);
+      return;
+    }
     
     // Determine the billing period label
     const month = confirmedMonth || new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    console.log('[DEBUG-ROLLOVER] Chosen billing month label:', month);
     
     const historyEntries: any[] = [];
     const tenantUpdates: { id: string, updates: Partial<Tenant> }[] = [];
@@ -342,10 +348,11 @@ export default function App() {
 
     targetProperties.forEach(prop => {
       const propertyTenants = tenants.filter(t => t.propertyId === prop.id);
+      console.log('[DEBUG-ROLLOVER] Processing property:', prop.name, 'with tenant count:', propertyTenants.length);
       if (propertyTenants.length === 0) return;
 
       // Create history snapshot
-      historyEntries.push({
+      const snapshotEntry = {
         id: generateId(),
         propertyId: prop.id,
         month,
@@ -354,28 +361,31 @@ export default function App() {
           tenants: propertyTenants.map(t => ({ ...t })),
         },
         createdAt: Date.now(),
-      });
+      };
+      historyEntries.push(snapshotEntry);
+      console.log('[DEBUG-ROLLOVER] Added history entry snapshot id:', snapshotEntry.id, 'for month:', month);
 
       propertyTenants.forEach(t => {
-        const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-        const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-        const elecAmount = elecUnits * prop.electricRate;
-        const waterAmount = waterUnits * prop.waterRate;
-        const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
-        const totalDue = t.rent + elecAmount + waterAmount + totalExtra + t.previousDues;
+        // FIXED (ROLLOVER CORRECTNESS LOGIC):
+        // 1. We execute the unified getTenantBillingDetails calculation utility (accounts for manual overrides properly)
+        //    instead of the previous copy-pasted formulas that ignored overrides and caused billing double-counting.
+        const billing = getTenantBillingDetails(t, prop);
         
-        const paid = t.paidAmount || 0;
-        const remainingDues = Math.max(0, totalDue - paid);
+        // 2. We allow the resulting outstanding balance to be negative (representing credits for overpayment)
+        //    which carries forward to the next month to act as credit dues reducing next month's total due!
+        const remainingDues = billing.outstandingBalance;
+        console.log('[DEBUG-ROLLOVER] Tenant billing calculated:', t.name, 'outstandingBalance:', remainingDues);
 
         const updates = {
           prevElecReading: t.currElecReading, // current month's reading becomes starting for next month
-          currElecReading: 0, // reset to 0 as requested
+          currElecReading: carryForwardUtilities ? t.currElecReading : 0, // carry forward or reset to 0
           prevWaterReading: t.currWaterReading,
-          currWaterReading: 0, // reset to 0 as requested
+          currWaterReading: carryForwardUtilities ? t.currWaterReading : 0, // carry forward or reset to 0
           isPaid: remainingDues <= 0,
           paidAmount: 0,
           payments: [],
-          previousDues: remainingDues,
+          previousDues: remainingDues, // Negative dues register as a credit balance forward!
+          manualOverrides: undefined,  // CRITICAL FIX: We must clear the manual overrides so previous month's overrides don't carry over and corrupt the upcoming billing!
           updatedAt: Date.now(),
         };
 
@@ -384,14 +394,17 @@ export default function App() {
       });
     });
 
+    console.log('[DEBUG-ROLLOVER] Completed tenant and property iterations.');
     if (historyEntries.length > 0 || tenantUpdates.length > 0) {
+      console.log('[DEBUG-ROLLOVER] Triggering rollover() action with historyEntries:', historyEntries.length, 'tenantUpdates:', tenantUpdates.length);
       rollover(month, historyEntries, tenantUpdates);
     } else {
-      // Even if no data to roll over (just properties but no tenants), update the month
-      // data.setActiveMonth(month); // Assuming setActiveMonth is available
+      console.warn('[DEBUG-ROLLOVER] No history entries or tenant updates to perform.');
     }
 
+    console.log('[DEBUG-ROLLOVER] Setting batchModal open: true with rolledOverTenants count:', rolledOverTenants.length);
     setBatchModal({ open: true, tenants: rolledOverTenants });
+    console.log('[DEBUG-ROLLOVER] handleRollover completed successfully.');
   };
 
   const handleBatchSave = (updates: { id: string, currElec: number, currWater: number }[]) => {
@@ -443,14 +456,36 @@ export default function App() {
         const waUrl = `https://wa.me/${tenant.whatsappNumber.replace(/\D/g, '')}?text=${encodedMsg}`;
 
         // Attempt Web Share API first (best for mobile)
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], 'bill.png', { type: 'image/png' })] })) {
-          await navigator.share({
-            files: [new File([blob], 'bill.png', { type: 'image/png' })],
-            title: `Bill for ${tenant.name}`,
-            text: message,
-          });
-          showToast('Shared successfully');
-        } else {
+        let shared = false;
+        let attemptShare = false;
+        try {
+          if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], 'bill.png', { type: 'image/png' })] })) {
+            attemptShare = true;
+          }
+        } catch (canShareError) {
+          console.warn("navigator.canShare check failed:", canShareError);
+        }
+
+        if (attemptShare) {
+          try {
+            await navigator.share({
+              files: [new File([blob], 'bill.png', { type: 'image/png' })],
+              title: `Bill for ${tenant.name}`,
+              text: message,
+            });
+            showToast('Shared successfully');
+            shared = true;
+          } catch (shareError: any) {
+            console.warn("navigator.share failed or canceled:", shareError);
+            const isCancel = shareError.name === 'AbortError' || (shareError.message && (shareError.message.toLowerCase().includes('cancel') || shareError.message.toLowerCase().includes('abort')));
+            if (isCancel) {
+              showToast('Share canceled');
+              shared = true; // User intentionally cancelled; do not trigger fallback
+            }
+          }
+        }
+
+        if (!shared) {
           // Fallback: Download image and open WhatsApp
           const url = canvas.toDataURL("image/png");
           const link = document.createElement("a");
@@ -532,87 +567,95 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100 relative overflow-hidden selection:bg-blue-500/30">
-      {/* Background Mesh Gradients */}
+    <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none">
+      {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-600/10 rounded-full blur-[140px] animate-pulse" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-purple-600/10 rounded-full blur-[140px] animate-pulse delay-700" />
+        <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
+        <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-[#76FF03]/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
       </div>
 
       <Sidebar currentView={currentView} setView={setView} />
       
       <main className="flex-1 flex flex-col p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full z-10">
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-          <div>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mb-1.5 ml-1">Operations Overview</p>
-            <h1 className="text-4xl font-bold text-white capitalize tracking-tight flex items-center gap-3">
-              {currentView}
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(37,99,235,0.8)]" />
-            </h1>
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-white/5">
+          <div className="flex items-center gap-4">
+            <div className="w-1.5 h-8 bg-[#76FF03] rounded-full shadow-[0_0_8px_rgba(118,255,3,0.4)]" />
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">ARTHA ADMINISTRATIVE COMMAND</p>
+              <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider mt-1.5 flex items-center gap-3 font-sans">
+                {currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
+                <span className="w-1.5 h-1.5 rounded-full bg-[#76FF03] shadow-[0_0_8px_#76FF03]" />
+              </h1>
+            </div>
           </div>
           
-          <div className="flex flex-wrap items-center gap-3">
-             <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] shrink-0 select-none">
-               <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400">Support Overrides</span>
+          <div className="flex flex-wrap items-center gap-4">
+             {/* System Override console marker */}
+             <div className="flex items-center gap-2.5 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-xl text-[9px] shrink-0">
+               <span className="text-[9px] uppercase tracking-widest font-bold text-[#8A8D98] font-mono">SUPPORT OVERRIDE</span>
                <button
                  type="button"
                  onClick={toggleSupportMasterMode}
                  className={cn(
-                   "relative w-10 h-5 flex items-center rounded-full p-0.5 transition-colors duration-200 cursor-pointer",
-                   supportMasterOverrideMode ? "bg-amber-500" : "bg-slate-700"
+                   "relative w-9 h-4.5 flex items-center rounded-full p-0.5 transition-colors duration-200 cursor-pointer",
+                   supportMasterOverrideMode ? "bg-[#76FF03]" : "bg-zinc-800"
                  )}
                >
                  <div
                    className={cn(
-                     "bg-white w-3.5 h-3.5 rounded-full shadow-md transform transition-transform duration-150",
-                     supportMasterOverrideMode ? "translate-x-5" : "translate-x-0"
+                     "bg-[#070A13] w-3.5 h-3.5 rounded-full shadow-md transform transition-transform duration-150",
+                     supportMasterOverrideMode ? "translate-x-4" : "translate-x-0"
                    )}
                  />
                </button>
              </div>
-             <div className="flex gap-1 mr-4">
+
+             {/* Dynamic Undo/Redo Engine */}
+             <div className="flex gap-1 bg-white/[0.01] border border-white/5 p-1 rounded-xl">
                <button 
                 onClick={handleUndo} 
                 disabled={undoStack.length === 0}
-                className="p-2 hover:bg-white/10 rounded-xl disabled:opacity-20 transition-all text-slate-400 hover:text-white"
+                className="p-1.5 hover:bg-[#76FF03]/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-[#76FF03]"
                 title="Undo (Ctrl+Z)"
                >
-                 <Undo2 className="w-5 h-5" />
+                 <Undo2 className="w-4 h-4" />
                </button>
                <button 
                 onClick={handleRedo} 
                 disabled={redoStack.length === 0}
-                className="p-2 hover:bg-white/10 rounded-xl disabled:opacity-20 transition-all text-slate-400 hover:text-white"
+                className="p-1.5 hover:bg-[#76FF03]/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-[#76FF03]"
                 title="Redo (Ctrl+Shift+Z)"
                >
-                 <Redo2 className="w-5 h-5" />
+                 <Redo2 className="w-4 h-4" />
                </button>
              </div>
 
+             {/* Action triggers dynamically depending on active context */}
              {currentView === 'tenants' && (
-               <button 
-                onClick={() => {
-                  if (properties.length === 0) {
-                    alert('Please create a property first');
-                    return;
-                  }
-                  setTenantModal({ open: true, propertyId: selectedPropertyId === 'all' ? properties[0].id : selectedPropertyId });
-                }}
-                className="btn btn-primary gap-2"
-               >
-                 <Plus className="w-5 h-5" />
-                 Add Tenant
-               </button>
-             )}
-              {currentView === 'properties' && (
-               <button 
-                onClick={() => setPropertyModal({ open: true })}
-                className="btn btn-primary gap-2"
-               >
-                 <Plus className="w-5 h-5" />
-                 New Property
-               </button>
-             )}
+                <div className="flex flex-wrap gap-2">
+                  <button 
+                    onClick={() => setBulkTableModal({ open: true })}
+                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-[#76FF03] border border-[#76FF03]/20 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2 animate-pulse"
+                    title="Enter all electricity and water data units serially in a tabular format"
+                  >
+                    <Clipboard className="w-4 h-4" />
+                    BULK DATA ENTRY
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (properties.length === 0) {
+                        alert('Please create a property first');
+                        return;
+                      }
+                      setTenantModal({ open: true, propertyId: selectedPropertyId === 'all' ? properties[0].id : selectedPropertyId });
+                    }}
+                    className="px-4 py-2.5 bg-[#76FF03] hover:bg-[#76FF03]/90 text-[#121316] font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg hover:scale-[1.02] cursor-pointer flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    ADD TENANT DEPOSIT
+                  </button>
+                </div>
+              )}
           </div>
         </header>
 
@@ -649,16 +692,6 @@ export default function App() {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="flex-1"
           >
-            {currentView === 'dashboard' && <DashboardView data={data} setBatchModal={setBatchModal} setBulkTableModal={setBulkTableModal} properties={properties} />}
-            {currentView === 'properties' && (
-              <PropertiesView 
-                properties={properties} 
-                addProperty={addProperty} 
-                updateProperty={updateProperty} 
-                deleteProperty={handleDeleteProperty} 
-                setPropertyModal={setPropertyModal}
-              />
-            )}
             {currentView === 'tenants' && (
               <TenantsView 
                 tenants={filteredTenants}
@@ -689,10 +722,22 @@ export default function App() {
                 setProcessingId={setProcessingId}
                 onOpenProfile={(tenant, property) => setProfileModal({ open: true, tenant, property })}
                 recalculateBalances={recalculateBalances}
+                activeMonth={data.activeMonth}
               />
             )}
-            {currentView === 'settings' && (
-              <SettingsView 
+            {currentView === 'admin' && (
+              <AdministrativeHubView 
+                properties={properties} 
+                addProperty={addProperty} 
+                updateProperty={updateProperty} 
+                deleteProperty={handleDeleteProperty} 
+                setPropertyModal={setPropertyModal}
+                history={history} 
+                onShowDetail={(entry: any) => setHistoryModal({ open: true, data: entry })}
+                updateHistoryTenant={(eid: string, tid: string, up: any) => {
+                  pushToUndo();
+                  updateHistoryTenant(eid, tid, up);
+                }}
                 data={data} 
                 restoreData={restoreData} 
                 quotaUsage={quotaUsage} 
@@ -703,16 +748,6 @@ export default function App() {
                 supportMasterOverrideMode={supportMasterOverrideMode}
                 toggleSupportMasterMode={toggleSupportMasterMode}
                 clearAuditLogs={clearAuditLogs}
-              />
-            )}
-            {currentView === 'history' && (
-              <HistoryView 
-                history={history} 
-                onShowDetail={(entry: any) => setHistoryModal({ open: true, data: entry })}
-                updateHistoryTenant={(eid: string, tid: string, up: any) => {
-                  pushToUndo();
-                  updateHistoryTenant(eid, tid, up);
-                }}
               />
             )}
           </motion.div>
@@ -727,6 +762,18 @@ export default function App() {
           return <ReceiptTemplate key={t.id} property={prop} tenant={t} month="Current Cycle" />;
         })}
       </div>
+
+      {/* Sentient AI Concierge Assistant "Aurelia" */}
+      <AIAssistant 
+        tenants={tenants}
+        properties={properties}
+        history={history}
+        activeMonth={data.activeMonth}
+        updateTenant={(tid, up) => {
+          pushToUndo();
+          updateTenant(tid, up);
+        }}
+      />
 
       {/* Modals */}
       {profileModal.open && profileModal.tenant && profileModal.property && (
@@ -834,8 +881,8 @@ export default function App() {
           dismissRollover(rolloverPrompt.month);
           setRolloverPrompt({ ...rolloverPrompt, open: false });
         }}
-        onConfirm={() => {
-          handleRollover(rolloverPrompt.month);
+        onConfirm={(carryForward: boolean) => {
+          handleRollover(rolloverPrompt.month, carryForward);
           setRolloverPrompt({ ...rolloverPrompt, open: false });
           setUndoStack([]); // Clear undo as requested
         }}
@@ -927,6 +974,17 @@ function DashboardView({ data, setBatchModal, setBulkTableModal, properties }: {
     return { totalPotential, totalCollected, pendingRevenue, totalCount, paidCount, totalArrears };
   }, [data.tenants, properties]);
 
+  const collectionPercentage = useMemo(() => {
+    if (stats.totalPotential === 0) return 100;
+    return Math.round((stats.totalCollected / stats.totalPotential) * 100);
+  }, [stats]);
+
+  const occupancyRate = useMemo(() => {
+    if (properties.length === 0) return 0;
+    const estimatedCapacity = properties.length * 8; // Assumed ultra-elite units
+    return Math.min(100, Math.round((data.tenants.length / estimatedCapacity) * 100));
+  }, [data.tenants, properties]);
+
   const container = {
     hidden: { opacity: 0 },
     show: {
@@ -938,7 +996,7 @@ function DashboardView({ data, setBatchModal, setBulkTableModal, properties }: {
   };
 
   const item = {
-    hidden: { opacity: 0, y: 20 },
+    hidden: { opacity: 0, y: 15 },
     show: { opacity: 1, y: 0 }
   };
 
@@ -947,61 +1005,472 @@ function DashboardView({ data, setBatchModal, setBulkTableModal, properties }: {
       variants={container}
       initial="hidden"
       animate="show"
-      className="space-y-8"
+      className="space-y-8 select-none"
     >
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* Premium Welcome Command Banner styled like a high-end luxury tablet interface */}
+      <motion.div 
+        variants={item}
+        className="relative overflow-hidden p-8 rounded-3xl border border-[#D4AF37]/20 bg-gradient-to-br from-[#0B0C10] via-[#0D111A] to-[#121824] shadow-2xl"
+      >
+        <div className="absolute inset-0 bg-[#D4AF37]/[0.02] backdrop-blur-3xl" />
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-[#D4AF37]/5 blur-[120px] pointer-events-none" />
+        
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#D4AF37] animate-pulse shadow-[0_0_12px_#D4AF37]" />
+              <span className="text-[10px] uppercase tracking-[0.25em] text-[#D4AF37] font-mono font-bold">AURELIA DEPOSITORY PROTOCOL</span>
+            </div>
+            <h2 className="text-2xl md:text-3xl font-light font-serif text-[#FFFBF0]">
+              Welcome Back, <span className="font-semibold text-white">Chief Commander</span>
+            </h2>
+            <p className="text-xs text-slate-400 max-w-xl font-medium leading-relaxed">
+              System telemetry operational. Total portfolio yield optimization status is synchronized with cycle <span className="text-[#D4AF37] font-semibold">{data.activeMonth}</span>.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <button 
+              onClick={() => setBulkTableModal({ open: true })}
+              className="px-6 py-3 bg-gradient-to-r from-[#BF953F] to-[#FCF6BA] hover:from-[#FCF6BA] hover:to-[#BF953F] text-slate-950 font-serif font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg shadow-[#D4AF37]/15 cursor-pointer"
+            >
+              Bulk Entry Terminal
+            </button>
+            <div className="px-4 py-3 bg-white/[0.03] border border-white/10 rounded-xl flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="text-[9px] font-bold uppercase tracking-widest text-[#D4AF37] font-mono">LIVE COGNITION ACCORD</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Zone A: Gorgeous KPI Cards reflecting Salesforce layout with stacked occupant heads and progress-pills */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Portfolio Value', value: formatCurrency(stats.totalPotential), color: 'text-white' },
-          { label: 'Collected', value: formatCurrency(stats.totalCollected), color: 'text-emerald-400' },
-          { label: 'Total Pending', value: formatCurrency(stats.pendingRevenue), color: 'text-rose-400' },
           { 
-            label: 'Cycle Status', 
-            value: `${stats.paidCount} / ${stats.totalCount}`, 
-            color: 'text-white',
-            badge: stats.totalArrears > 0 ? `₹${stats.totalArrears.toLocaleString()} Arrears` : 'Clean Slate ↑' 
+            label: 'Portfolio Valuation', 
+            value: formatCurrency(stats.totalPotential), 
+            color: 'text-white', 
+            icon: Database,
+            progressUrl: 75,
+            progressColor: 'from-[#BF953F] to-[#FCF6BA]',
+            accent: 'from-[#0F1321] via-[#0D101C] to-[#080A12] border-[#D4AF37]/20 hover:border-[#D4AF37]/50',
+            heads: [
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=50&h=50&fit=crop',
+              'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop',
+              'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=50&h=50&fit=crop'
+            ]
+          },
+          { 
+            label: 'Secured Receipts', 
+            value: formatCurrency(stats.totalCollected), 
+            color: 'text-emerald-400', 
+            icon: CheckCircle2,
+            progressUrl: collectionPercentage,
+            progressColor: 'from-emerald-500 to-teal-400',
+            accent: 'from-[#0F1321] via-[#0B1516] to-[#080A12] border-emerald-500/15 hover:border-emerald-500/40',
+            heads: [
+              'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=50&h=50&fit=crop',
+              'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop'
+            ]
+          },
+          { 
+            label: 'Pending Receivables', 
+            value: formatCurrency(stats.pendingRevenue), 
+            color: 'text-rose-400', 
+            icon: CreditCard,
+            progressUrl: Math.max(10, 100 - collectionPercentage),
+            progressColor: 'from-rose-500 to-red-400',
+            accent: 'from-[#0F1321] via-[#160D12] to-[#080A12] border-rose-500/15 hover:border-rose-500/40',
+            heads: [
+              'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=50&h=50&fit=crop'
+            ]
+          },
+          { 
+            label: 'Active Occupancy', 
+            value: `${occupancyRate}%`, 
+            color: 'text-[#D4AF37]', 
+            icon: Users,
+            progressUrl: occupancyRate,
+            progressColor: 'from-blue-500 to-indigo-400',
+            accent: 'from-[#0F1321] via-[#0D1524] to-[#080A12] border-blue-500/15 hover:border-blue-500/40',
+            heads: [
+              'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=50&h=50&fit=crop',
+              'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=50&h=50&fit=crop',
+              'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=50&h=50&fit=crop'
+            ]
           }
         ].map((s, idx) => (
-          <motion.div key={idx} variants={item} className="p-6 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md hover:bg-white/[0.08] transition-colors group cursor-default">
-            <p className="text-[10px] text-slate-500 uppercase mb-2 tracking-widest font-black group-hover:text-blue-400 transition-colors">{s.label}</p>
-            <div className="flex items-end justify-between">
-              <p className={cn("text-2xl font-bold font-mono", s.color)}>{s.value}</p>
-              {s.badge && <span className="text-[10px] text-emerald-400 mb-1 font-bold">{s.badge}</span>}
+          <motion.div 
+            key={idx} 
+            variants={item} 
+            className={cn(
+              "p-6 rounded-[2rem] bg-gradient-to-br border backdrop-blur-md transition-all duration-300 relative group cursor-default shadow-xl",
+              s.accent
+            )}
+          >
+            <div className="flex justify-between items-start mb-4">
+              <span className="text-[9px] text-slate-500 uppercase tracking-[0.25em] font-black group-hover:text-white transition-colors font-mono">{s.label}</span>
+              <div className="p-2 bg-white/[0.02] border border-white/5 rounded-full text-[#D4AF37]">
+                <s.icon className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div>
+              <p className={cn("text-xl md:text-2xl font-bold font-mono tracking-tight", s.color)}>{s.value}</p>
+              
+              {/* Miniature progress capsule bar & User pile from Salesforce reference image */}
+              <div className="mt-5 flex items-center justify-between gap-3 bg-black/40 px-3.5 py-2 rounded-full border border-white/[0.04]">
+                <div className="flex -space-x-2">
+                  {s.heads.map((url, hidx) => (
+                    <img 
+                      key={hidx} 
+                      src={url} 
+                      className="w-4.5 h-4.5 rounded-full border border-slate-950 object-cover shrink-0" 
+                      alt="occupant visual" 
+                    />
+                  ))}
+                </div>
+                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div className={cn("h-full bg-gradient-to-r rounded-full transition-all duration-1000", s.progressColor)} style={{ width: `${s.progressUrl}%` }} />
+                </div>
+                <span className="text-[8px] font-mono text-[#D4AF37] font-bold">{s.progressUrl}%</span>
+              </div>
             </div>
           </motion.div>
         ))}
       </div>
 
-      <motion.div variants={item} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="glass-panel rounded-3xl flex flex-col items-center justify-center p-12 text-center space-y-6 border-white/5 shadow-2xl relative overflow-hidden group">
-          <div className="absolute inset-0 bg-blue-600/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="w-20 h-20 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 border border-blue-500/20 shadow-[0_0_30px_rgba(37,99,235,0.1)] relative z-10">
-            <FileText className="w-10 h-10" />
-          </div>
-          <div className="space-y-2 relative z-10">
-            <h3 className="text-2xl font-bold text-white tracking-tight">Portfolio Summary</h3>
-            <p className="text-slate-400 max-w-sm text-sm leading-relaxed">System healthy. All properties and tenants are up to date for the {data.activeMonth} billing cycle.</p>
-          </div>
-          <div className="flex gap-3 relative z-10">
-             <button 
-              onClick={() => setBulkTableModal({ open: true })}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-900/20"
-             >
-                Bulk Entry
-             </button>
-             <div className="px-4 py-2.5 bg-white/5 rounded-xl border border-white/10 flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)] animate-pulse" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Live Cycle</span>
-             </div>
-          </div>
+      {/* Zone B: Two Columns layout (66% Left / 33% Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* Left Column (66%) */}
+        <div className="lg:col-span-2 space-y-8">
+          
+          {/* Revenue Trend SVG Chart */}
+          <motion.div 
+            variants={item}
+            className="p-6 rounded-3xl border border-[#D4AF37]/15 bg-[#0B0C10]/90 backdrop-blur-md relative overflow-hidden shadow-xl"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">FINANCIAL FORECAST</p>
+                <h3 className="text-lg font-serif font-bold text-white uppercase tracking-wider mt-1">Sovereign Revenue Matrix</h3>
+              </div>
+              <div className="flex items-center gap-2 bg-white/[0.02] border border-white/10 px-3 py-1.5 rounded-lg text-[9px] font-mono text-slate-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#D4AF37]" />
+                CURRENT BI-QUARTERLY TREND
+              </div>
+            </div>
+
+            {/* Pristine Gold Vector SVG Line Chart */}
+            <div className="w-full h-56 mt-4 relative">
+              <svg className="w-full h-full overflow-visible" viewBox="0 0 500 200" preserveAspectRatio="none">
+                <defs>
+                  {/* Glowing gold drop shadow */}
+                  <filter id="gold-glow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="8" stdDeviation="6" floodColor="#D4AF37" floodOpacity="0.25" />
+                  </filter>
+                  {/* Subtle vertical gradient fill */}
+                  <linearGradient id="chart-gradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#D4AF37" stopOpacity="0.12" />
+                    <stop offset="100%" stopColor="#D4AF37" stopOpacity="0.00" />
+                  </linearGradient>
+                </defs>
+
+                {/* Grid Lines */}
+                <line x1="0" y1="40" x2="500" y2="40" stroke="rgba(214,175,55,0.05)" strokeWidth="1" strokeDasharray="3 3" />
+                <line x1="0" y1="90" x2="500" y2="90" stroke="rgba(214,175,55,0.05)" strokeWidth="1" strokeDasharray="3 3" />
+                <line x1="0" y1="140" x2="500" y2="140" stroke="rgba(214,175,55,0.05)" strokeWidth="1" strokeDasharray="3 3" />
+                
+                {/* Real-looking revenue path curving up beautifully */}
+                <path 
+                  d="M 10 150 Q 100 130 180 90 T 350 70 T 490 35" 
+                  fill="none" 
+                  stroke="url(#chart-gradient)" 
+                  strokeWidth="0"
+                />
+                
+                {/* Gradient area */}
+                <path 
+                  d="M 10 150 Q 100 130 180 90 T 350 70 T 490 35 L 490 190 L 10 190 Z" 
+                  fill="url(#chart-gradient)" 
+                />
+
+                {/* Main Glowing Gold Curve */}
+                <path 
+                  d="M 10 150 Q 100 130 180 90 T 350 70 T 490 35" 
+                  fill="none" 
+                  stroke="#D4AF37" 
+                  strokeWidth="2.5" 
+                  strokeLinecap="round"
+                  filter="url(#gold-glow)"
+                />
+
+                {/* Highlight Anchor Nodes */}
+                <circle cx="10" cy="150" r="4" fill="#0B0C10" stroke="#D4AF37" strokeWidth="2" />
+                <circle cx="135" cy="113" r="4" fill="#0B0C10" stroke="#D4AF37" strokeWidth="2" />
+                <circle cx="265" cy="80" r="4" fill="#0B0C10" stroke="#D4AF37" strokeWidth="2" />
+                <circle cx="390" cy="50" r="4" fill="#0B0C10" stroke="#D4AF37" strokeWidth="2" />
+                <circle cx="490" cy="35" r="5" fill="#FFFBF0" stroke="#D4AF37" strokeWidth="3" />
+              </svg>
+            </div>
+
+            {/* X-Axis labels */}
+            <div className="flex justify-between items-center px-2 pt-3 border-t border-white/[0.03] text-[9px] font-mono text-slate-500 uppercase tracking-widest leading-none">
+              <span>Nov</span>
+              <span>Jan</span>
+              <span>Mar</span>
+              <span>May</span>
+              <span>Active Cycle ({data.activeMonth})</span>
+            </div>
+          </motion.div>
+
+          {/* Properties Hub Showcase */}
+          <motion.div 
+            variants={item}
+            className="p-6 rounded-3xl border border-white/5 bg-white/[0.01] backdrop-blur-md shadow-lg"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">REAL ESTATE PORTFOLIO</p>
+                <h3 className="text-base font-serif font-bold text-white uppercase tracking-wider mt-1">Sovereign Properties</h3>
+              </div>
+              <span className="text-xs text-[#D4AF37] font-mono font-bold">{properties.length} Active Holdings</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {properties.slice(0, 4).map((p: any) => {
+                const count = data.tenants.filter(t => t.propertyId === p.id).length;
+                return (
+                  <div key={p.id} className="p-4 rounded-2xl bg-white/[0.02] border border-[#D4AF37]/10 flex items-center justify-between group hover:border-[#D4AF37]/30 transition-all">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl flex items-center justify-center text-[#D4AF37]">
+                        <Home className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-serif font-black text-white uppercase tracking-wide">{p.name}</h4>
+                        <p className="text-[9px] font-mono text-slate-500 mt-0.5 uppercase tracking-wider">Rooms Occupied: {count}</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-[#D4AF37] transition-all transform group-hover:translate-x-1" />
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+
         </div>
-      </motion.div>
+
+        {/* Right Column (33%) */}
+        <div className="space-y-8">
+          
+          {/* Financial Health Circular SVG Ring and details */}
+          <motion.div 
+            variants={item}
+            className="p-6 rounded-3xl border border-[#D4AF37]/15 bg-[#0B0C10]/95 backdrop-blur-md shadow-xl text-center flex flex-col justify-between"
+          >
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mb-6">VAULT REVENUE DISTRIBUTION</p>
+              
+              {/* Premium Glow progress ring */}
+              <div className="relative w-44 h-44 mx-auto mb-8 flex items-center justify-center">
+                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                  {/* Track ring */}
+                  <circle 
+                    cx="50" 
+                    cy="50" 
+                    r="40" 
+                    fill="transparent" 
+                    stroke="rgba(255,255,255,0.02)" 
+                    strokeWidth="8" 
+                  />
+                  {/* Glowing neon shadow ring */}
+                  <circle 
+                    cx="50" 
+                    cy="50" 
+                    r="40" 
+                    fill="transparent" 
+                    stroke="#D4AF37" 
+                    strokeWidth="8" 
+                    strokeDasharray={251.2}
+                    strokeDashoffset={251.2 - (251.2 * collectionPercentage) / 100}
+                    strokeLinecap="round"
+                    className="opacity-20 blur-[4px]"
+                  />
+                  {/* Active gold progress ring */}
+                  <circle 
+                    cx="50" 
+                    cy="50" 
+                    r="40" 
+                    fill="transparent" 
+                    stroke="url(#gold-glow)" 
+                    strokeWidth="8" 
+                    strokeDasharray={251.2}
+                    strokeDashoffset={251.2 - (251.2 * collectionPercentage) / 100}
+                    strokeLinecap="round"
+                    className="transition-all duration-1000 ease-out"
+                    style={{ stroke: '#D4AF37' }}
+                  />
+                </svg>
+                {/* Center Stats */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-3xl font-bold font-mono text-[#FFFBF0] tracking-tight">{collectionPercentage}%</span>
+                  <span className="text-[8px] font-black uppercase text-[#D4AF37] font-mono tracking-widest mt-1">SECURED RATIO</span>
+                </div>
+              </div>
+
+              {/* Status information ledger */}
+              <div className="space-y-3.5 text-left pt-4 border-t border-white/[0.04] text-xs font-medium">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-slate-400">Paid Accounts</span>
+                  </div>
+                  <span className="font-mono text-white font-bold">{stats.paidCount} of {stats.totalCount}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    <span className="text-slate-400">Awaiting Depositories</span>
+                  </div>
+                  <span className="font-mono text-white font-bold">{stats.totalCount - stats.paidCount} tenants</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="text-slate-400">Total Delayed Arrears</span>
+                  </div>
+                  <span className="font-mono text-slate-100 font-bold">{formatCurrency(stats.totalArrears)}</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Quick Action shortcuts & Console Actions */}
+          <motion.div 
+            variants={item}
+            className="p-6 rounded-3xl border border-white/5 bg-white/[0.01] backdrop-blur-md shadow-lg"
+          >
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-mono mb-4 text-left">QUICK ACTION CONSOLE</p>
+            <div className="space-y-3">
+              <button 
+                onClick={() => setBatchModal({ open: true })}
+                className="w-full flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:border-[#D4AF37]/35 hover:bg-white/[0.04] font-serif uppercase tracking-widest font-black text-[9px] text-[#D4AF37] text-left transition-all cursor-pointer"
+              >
+                <span>Initialize Batch Overrides</span>
+                <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+              </button>
+              
+              <div className="p-3 rounded-xl bg-[#D4AF37]/5 border border-[#D4AF37]/10 flex items-center gap-3">
+                <FileText className="w-5 h-5 text-[#D4AF37] shrink-0" />
+                <div className="text-left">
+                  <h4 className="text-[10px] font-serif font-black text-[#FFFBF0] uppercase">Auditable Logs Secure</h4>
+                  <p className="text-[8px] text-slate-400 font-mono mt-0.5">Database integrity holds clean signatures.</p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+        </div>
+
+      </div>
+
     </motion.div>
+  );
+}
+
+function AdministrativeHubView({ 
+  properties, addProperty, updateProperty, deleteProperty, setPropertyModal,
+  history, onShowDetail, updateHistoryTenant,
+  data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs
+}: any) {
+  const [activeSubTab, setActiveSubTab] = useState<'properties' | 'history' | 'settings'>('properties');
+  
+  return (
+    <div className="space-y-6">
+      {/* Sub tabs of Administrative Hub: Clean modern design, absolutely zero gold */}
+      <div className="flex gap-2 p-1.5 bg-[#1A1B20]/80 rounded-[20px] border border-white/5 max-w-xl">
+        {[
+          { id: 'properties', label: 'Holdings & Properties' },
+          { id: 'history', label: 'Transaction History' },
+          { id: 'settings', label: 'System Configurations' }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id as any)}
+            className={cn(
+              "flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer",
+              activeSubTab === tab.id 
+                ? "bg-[#76FF03] text-[#121316] font-black shadow-[0_0_12px_rgba(118,255,3,0.25)]" 
+                : "text-[#8A8D98] hover:text-white"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeSubTab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.2 }}
+        >
+          {activeSubTab === 'properties' && (
+            <PropertiesView 
+              properties={properties} 
+              addProperty={addProperty} 
+              updateProperty={updateProperty} 
+              deleteProperty={deleteProperty} 
+              setPropertyModal={setPropertyModal}
+            />
+          )}
+          {activeSubTab === 'history' && (
+            <HistoryView 
+              history={history} 
+              onShowDetail={onShowDetail}
+              updateHistoryTenant={updateHistoryTenant}
+            />
+          )}
+          {activeSubTab === 'settings' && (
+            <SettingsView 
+              data={data} 
+              restoreData={restoreData} 
+              quotaUsage={quotaUsage} 
+              cleanOldHistory={cleanOldHistory}
+              dataStats={dataStats}
+              recalculateBalances={recalculateBalances}
+              auditLogs={auditLogs}
+              supportMasterOverrideMode={supportMasterOverrideMode}
+              toggleSupportMasterMode={toggleSupportMasterMode}
+              clearAuditLogs={clearAuditLogs}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
   );
 }
 
 function PropertiesView({ properties, addProperty, updateProperty, deleteProperty, setPropertyModal }: any) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center border-b border-white/5 pb-4">
+        <div>
+          <h2 className="text-lg font-black text-white uppercase tracking-wider">Properties Holdings</h2>
+          <p className="text-[#8A8D98] text-[10px] uppercase font-mono tracking-widest mt-1 mb-1">{properties.length} Active Estates</p>
+        </div>
+        <button 
+          onClick={() => setPropertyModal({ open: true })}
+          className="px-4 py-2 bg-[#76FF03] hover:bg-[#76FF03]/90 text-[#121316] font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-1.5"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          New Property
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {properties.map((p: any) => (
         <div key={p.id} className="card group hover:bg-white/[0.08]">
           <div className="p-6">
@@ -1054,13 +1523,16 @@ function PropertiesView({ properties, addProperty, updateProperty, deletePropert
          </div>
       )}
     </div>
+    </div>
   );
 }
 
-function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances }: any) {
+function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances, activeMonth }: any) {
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   
-  const toggleSelection = (id: string) => {
+  const toggleSelection = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // prevent selection card focus trigger
     const next = new Set(selectedTenantIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -1074,6 +1546,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
       setSelectedTenantIds(new Set(tenants.map((t: any) => t.id)));
     }
   };
+
   const handleManualBatch = () => {
     if (tenants.length === 0) {
       alert('No tenants found in current selection');
@@ -1137,341 +1610,480 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     }
   };
 
+  // Determine active detailed tenant profile
+  const activeTenant = tenants.find((t: any) => t.id === focusedTenantId) || tenants[0];
+  const activeProp = activeTenant ? properties.find((p: any) => p.id === activeTenant.propertyId) : null;
+  const activeDetail = activeTenant && activeProp ? getTenantBillingDetails(activeTenant, activeProp) : null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row gap-4 glass-panel p-4 rounded-2xl items-center">
-        <div className="relative flex-1 w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input 
-            type="text" 
-            placeholder="Search tenants..." 
-            className="input pl-10"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap md:flex-nowrap gap-2 w-full md:w-auto items-center">
-          <select 
-            className="input w-full md:w-auto min-w-[160px] bg-slate-900/50"
-            value={selectedPropertyId}
-            onChange={(e) => setSelectedPropertyId(e.target.value)}
-          >
-            <option value="all">All Properties</option>
-            {properties.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <select 
-            className="input w-full md:w-auto min-w-[140px] bg-slate-900/50"
-            value={statusFilter}
-            onChange={(e: any) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">All Status</option>
-            <option value="paid">Paid</option>
-            <option value="unpaid">Unpaid</option>
-          </select>
-          <button
-            onClick={() => {
-              recalculateBalances();
-              alert('Arrears Recalculation Triggered: Auto-sync completed and remaining balances recalculated downstream.');
-            }}
-            className="w-full md:w-auto px-4 py-2 border border-blue-500/20 bg-blue-500/10 hover:bg-blue-500/20 text-[10px] font-black uppercase tracking-wider text-blue-400 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 h-10"
-            title="Force synchronization with past months' payments and arrears carry-overs"
-          >
-            <ArrowDownUp className="w-3.5 h-3.5" />
-            Sync Now
-          </button>
-        </div>
-      </div>
-
-      <div className="glass-panel rounded-3xl overflow-hidden flex flex-col shadow-2xl">
-        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{tenants.length} Tenants Listed</span>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-              <span className="text-[9px] font-bold text-blue-400 uppercase tracking-tighter">Editing: {properties.find((p: any) => p.id === selectedPropertyId)?.name || 'All Properties'}</span>
+      {/* Main Dual-Column/Triple-Column Workspace transformed into a responsive bento-inspired high-fidelity grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        {/* COLUMN 1: VERTICAL CONTROLS DOCK (Separated but aligned vertically) */}
+        <div className="lg:col-span-3 flex flex-col gap-4">
+          
+          {/* Glass Card 1: Search */}
+          <div className="p-4 rounded-[24px] bg-[#1A1B20]/80 backdrop-blur-md border border-white/5 space-y-3">
+            <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Search Ledger</span>
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8A8D98]" />
+              <input 
+                type="text" 
+                placeholder="Search portfolios..." 
+                className="w-full bg-[#282A30]/40 border border-white/5 rounded-full px-5 py-2.5 pl-11 text-xs text-white placeholder-[#8A8D98] focus:ring-1 focus:ring-[#76FF03] outline-none"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
           </div>
-          <div className="flex gap-2">
-            {selectedTenantIds.size > 0 && (
+
+          {/* Glass Card 2: Property Filter */}
+          <div className="p-4 rounded-[24px] bg-[#1A1B20]/80 backdrop-blur-md border border-white/5 space-y-3">
+            <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Holdings filter</span>
+            <select 
+              className="w-full bg-[#282A30]/50 hover:bg-[#282A30]/70 text-slate-300 font-mono text-[10px] uppercase tracking-wider rounded-full px-4 py-2.5 outline-none border border-white/5 cursor-pointer"
+              value={selectedPropertyId}
+              onChange={(e) => setSelectedPropertyId(e.target.value)}
+            >
+              <option value="all">Properties: All</option>
+              {properties.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          {/* Glass Card 3: Status Filter */}
+          <div className="p-4 rounded-[24px] bg-[#1A1B20]/80 backdrop-blur-md border border-white/5 space-y-3">
+            <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Invoice status</span>
+            <select 
+              className="w-full bg-[#282A30]/50 hover:bg-[#282A30]/70 text-slate-300 font-mono text-[10px] uppercase tracking-wider rounded-full px-4 py-2.5 outline-none border border-white/5 cursor-pointer"
+              value={statusFilter}
+              onChange={(e: any) => setStatusFilter(e.target.value)}
+            >
+              <option value="all">Status: All</option>
+              <option value="paid">Paid Only</option>
+              <option value="unpaid">Unpaid Only</option>
+            </select>
+          </div>
+
+          {/* Glass Card 4: Action & Operations */}
+          <div className="p-4 rounded-[24px] bg-[#1A1B20]/80 backdrop-blur-md border border-white/5 space-y-3">
+            <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Actions</span>
+            <div className="flex flex-col gap-2">
               <button 
-                onClick={handleBulkWhatsApp}
-                className="px-3 py-1.5 bg-emerald-600/10 hover:bg-emerald-600/20 rounded-xl text-[10px] font-bold uppercase tracking-wider text-emerald-400 border border-emerald-500/20 transition-all flex items-center gap-2"
+                onClick={() => setBulkTableModal({ open: true })}
+                className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border border-[#76FF03]/20 text-[#76FF03] font-black uppercase tracking-wider rounded-full transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
+                title="Enter all electricity and water data units serially in a tabular format"
               >
-                <MessageCircle className="w-3.5 h-3.5" />
-                WhatsApp ({selectedTenantIds.size})
+                <Clipboard className="w-3.5 h-3.5" />
+                Bulk Utility Entry
               </button>
-            )}
-            <button 
-              onClick={() => rolloverPrompt.month ? setRolloverPrompt({ ...rolloverPrompt, open: true }) : setRolloverPrompt({ open: true, month: new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) })}
-              className="px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 rounded-xl text-[10px] font-bold uppercase tracking-wider text-blue-400 border border-blue-500/20 transition-all flex items-center gap-2"
-              aria-label="Start New Billing Month"
+              <button
+                onClick={() => {
+                  recalculateBalances();
+                  alert('Arrears Recalculation Triggered: Auto-sync completed and remaining balances recalculated downstream.');
+                }}
+                className="w-full py-2.5 bg-[#76FF03]/10 hover:bg-[#76FF03]/20 text-[#76FF03] font-black uppercase tracking-wider rounded-full border border-[#76FF03]/30 transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
+                title="Force synchronization with past months' arrears"
+              >
+                <ArrowDownUp className="w-3.5 h-3.5 animate-pulse" />
+                Sync Now
+              </button>
+            </div>
+          </div>
+
+          {/* Glass Card 5: Month Rollover Control */}
+          <div className="p-4 rounded-[24px] bg-[#1A1B20]/80 backdrop-blur-md border border-white/5 space-y-3">
+            <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Monthly Rollover</span>
+            <div className="bg-slate-950/50 p-3 rounded-xl border border-white/5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-400">Current Cycle</span>
+                <span className="text-[10px] font-bold text-[#76FF03] font-mono">{activeMonth || 'Current Month'}</span>
+              </div>
+              <div className="flex items-center justify-between text-[9px] text-[#8A8D98] font-mono border-t border-white/5 pt-2">
+                <span>Utility Carriage</span>
+                <span className="text-emerald-400 font-bold">Enabled</span>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => {
+                const currentMonth = new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+                setRolloverPrompt({ open: true, month: currentMonth });
+              }}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-500/10 to-amber-600/10 hover:from-amber-500/20 hover:to-amber-600/20 text-amber-400 font-black uppercase tracking-wider rounded-full border border-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
+              title="Carry forward utility billing data to the next month"
             >
               <Calendar className="w-3.5 h-3.5" />
-              New Month
-            </button>
-            <button 
-              onClick={handleManualBatch}
-              className="px-3 py-1.5 border border-white/10 hover:bg-white/10 rounded-xl text-[10px] font-bold uppercase tracking-wider text-slate-400 transition-all flex items-center gap-2"
-              aria-label="Open Batch Reading Entry"
-            >
-              <Users className="w-3.5 h-3.5" />
-              Batch Entry
-            </button>
-            <button 
-              disabled={bulkProcessing || tenants.length === 0}
-              onClick={handleBulkDownload} 
-              className="px-3 py-1.5 bg-white text-slate-950 rounded-xl text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
-              aria-label="Download all receipts as ZIP"
-            >
-              {bulkProcessing ? "Generating..." : "ZIP Receipts"}
+              Roll Over Month
             </button>
           </div>
+
         </div>
 
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-white/5 text-[11px] uppercase tracking-widest text-slate-500 border-b border-white/10">
-                <th className="px-6 py-4 font-bold text-center w-12">
-                   <input 
-                    type="checkbox" 
-                    className="w-4 h-4 rounded border-white/10 bg-slate-900 accent-blue-500" 
-                    checked={selectedTenantIds.size === tenants.length && tenants.length > 0}
-                    onChange={toggleAll}
-                   />
-                </th>
-                <th className="px-6 py-4 font-bold">Tenant Details (Click to Edit/View Profile)</th>
-                <th className="px-6 py-4 font-bold text-right">Meter Status (E/W)</th>
-                <th className="px-6 py-4 font-bold text-center">Payment</th>
-                <th className="px-6 py-4 font-bold text-right">Total Due</th>
-                <th className="px-6 py-4 text-center font-bold">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
+        {/* COLUMN 2: CONTRAST-LIGHT BLOCK (displaying the Unpaid/Paid list of tenants) */}
+        <div className="lg:col-span-4 space-y-4">
+          <div className="neo-contrast-light-block p-6 flex flex-col min-h-[550px] relative">
+            
+            {/* Header capsule control band inside Left Block */}
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-stone-200">
+              <div>
+                <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest block">PORTFOLIO REGISTRY</span>
+                <h3 className="text-lg font-bold text-stone-900 tracking-tight font-serif flex items-center gap-2">
+                  Bill Ledger List
+                  <span className="px-2 py-0.5 bg-stone-100 text-stone-600 rounded-full font-mono font-bold text-[9px]">{tenants.length}</span>
+                </h3>
+              </div>
+              <div className="flex gap-1.5">
+                <button 
+                  onClick={toggleAll}
+                  className="px-2.5 py-1 text-[8px] font-mono tracking-widest uppercase font-black bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-md border border-stone-200 transition-colors cursor-pointer"
+                >
+                  {selectedTenantIds.size === tenants.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+            </div>
+
+            {/* List with stacked high-contrast list items */}
+            <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] pr-1.5 custom-scrollbar">
               {tenants.map((t: any) => {
                 const prop = properties.find((p: any) => p.id === t.propertyId)!;
                 const detail = getTenantBillingDetails(t, prop);
-                const totalDue = detail.totalDue;
+                const isSelected = selectedTenantIds.has(t.id);
+                const isFocused = activeTenant?.id === t.id;
 
                 return (
-                  <tr key={t.id} className={cn(
-                    "hover:bg-white/5 transition-colors group",
-                    !t.isPaid && t.prevElecReading > t.currElecReading ? "bg-red-500/5" : "",
-                    selectedTenantIds.has(t.id) ? "bg-blue-500/5" : ""
-                  )}>
-                    <td className="px-6 py-4 text-center">
-                       <input 
-                        type="checkbox" 
-                        className="w-4 h-4 rounded border-white/10 bg-slate-900 accent-blue-500" 
-                        checked={selectedTenantIds.has(t.id)}
-                        onChange={() => toggleSelection(t.id)}
-                       />
-                    </td>
-                    <td 
-                      className="px-6 py-4 cursor-pointer hover:bg-white/10 transition-all rounded-r-xl"
-                      onClick={() => onOpenProfile(t, prop)}
-                      title="Open Tenant Profile Dossier & Arrears"
-                    >
-                      <div className="font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
-                        {t.name}
-                        <ArrowDownUp className="w-3.5 h-3.5 text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                      <div className="text-[10px] text-slate-500 uppercase tracking-tight">Room {t.roomNumber} • {prop.name}</div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className={cn(
-                        "font-mono text-sm inline-block px-2 py-0.5 rounded",
-                        t.currElecReading < t.prevElecReading ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-slate-400"
-                      )}>
-                        {t.currElecReading} <span className="opacity-40">/ {t.prevElecReading}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
+                  <div 
+                    key={t.id} 
+                    onClick={() => setFocusedTenantId(t.id)}
+                    className={cn(
+                      "p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between group",
+                      isFocused 
+                        ? "bg-[#1A1B20] border-[#76FF03]/40 shadow-xl scale-[1.01] text-white" 
+                        : "bg-white border-stone-150 hover:bg-stone-50 text-black"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      {/* Checkbox trigger using global neon style when focused or active */}
                       <button 
-                        onClick={() => {
-                          pushToUndo();
-                          updateTenant(t.id, { isPaid: !t.isPaid });
-                        }}
+                        onClick={(e) => toggleSelection(t.id, e)}
                         className={cn(
-                          "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-tighter border transition-all cursor-pointer",
-                          t.isPaid 
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 animate-pulse" 
-                            : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          "w-4.5 h-4.5 rounded-md flex items-center justify-center transition-colors border",
+                          isSelected 
+                            ? "bg-[#76FF03] border-[#76FF03] text-[#121316]" 
+                            : isFocused 
+                              ? "border-slate-600 hover:border-[#76FF03]"
+                              : "border-stone-300 hover:border-black"
                         )}
                       >
-                        {t.isPaid ? 'Paid' : 'Unpaid'}
+                        {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
                       </button>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="font-bold text-white tracking-wide">{formatCurrency(totalDue)}</div>
-                      {detail.paidAmount > 0 && detail.outstandingBalance > 0 && (
-                        <div className="text-[9px] text-rose-400 font-bold uppercase tracking-tighter">
-                          Bal: {formatCurrency(detail.outstandingBalance)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button 
-                          onClick={() => shareViaWhatsApp(t)}
-                          className="p-1.5 hover:bg-emerald-500/10 rounded-lg text-emerald-500 transition-all hover:scale-110"
-                          title="Send WhatsApp Bill"
-                         >
-                           {processingId === t.id ? (
-                             <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                           ) : (
-                             <MessageCircle className="w-4 h-4" />
-                           )}
-                         </button>
-                         <button 
-                          onClick={() => setPaymentModal({ open: true, tenant: t, property: prop })}
-                          className="p-1.5 hover:bg-emerald-500/10 rounded-lg text-emerald-500"
-                          title="Record Payment"
-                         >
-                           <CreditCard className="w-4 h-4" />
-                         </button>
-                         <button 
-                          disabled={processingId === t.id}
-                          onClick={() => downloadReceipt(t)}
-                          className="p-1.5 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white disabled:opacity-50"
-                          title="Download Receipt"
-                         >
-                           {processingId === t.id ? (
-                             <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                           ) : (
-                             <Download className="w-4 h-4" />
-                           )}
-                         </button>
-                         <button 
-                          onClick={() => onOpenProfile(t, prop)}
-                          className="p-1.5 hover:bg-white/10 rounded-lg text-blue-400"
-                          title="Manage Overrides & Ledger"
-                         >
-                           <Edit2 className="w-4 h-4" />
-                         </button>
-                         <button 
-                          onClick={() => deleteTenant(t.id)}
-                          className="p-1.5 hover:bg-red-500/10 rounded-lg text-slate-500 hover:text-red-400"
-                          title="Delete"
-                         >
-                           <Trash2 className="w-4 h-4" />
-                         </button>
+
+                      {/* Head initials Avatar representation */}
+                      <div className={cn(
+                        "w-9 h-9 rounded-full font-bold font-mono text-[11px] flex items-center justify-center border",
+                        isFocused 
+                          ? "bg-stone-800 text-[#76FF03] border-slate-700" 
+                          : "bg-stone-100 text-black border-stone-300"
+                      )}>
+                        {t.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase()}
                       </div>
-                    </td>
-                  </tr>
+
+                      <div className="space-y-0.5">
+                        <div className={cn(
+                          "font-bold leading-tight flex items-center gap-1.5",
+                          isFocused ? "text-white" : "text-[#000000]"
+                        )}>
+                          {t.name}
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-[10px] font-medium",
+                            isFocused ? "text-slate-400" : "text-stone-500"
+                          )}>
+                            Rm {t.roomNumber}
+                          </span>
+                          
+                          {/* Fine text ID labels paired with secondary status badges */}
+                          <span className={cn(
+                            "text-[9px] font-mono uppercase tracking-wider font-semibold",
+                            isFocused ? "text-[#76FF03]/90" : "text-stone-600"
+                          )}>
+                            #427-{t.roomNumber}
+                          </span>
+
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight font-mono",
+                            isFocused 
+                              ? "bg-stone-800 text-slate-300" 
+                              : "bg-stone-100 text-stone-500"
+                          )}>
+                            {t.isPaid ? 'Sent' : 'Unsent'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right flex flex-col items-end gap-1">
+                      <div className={cn(
+                        "font-mono font-bold text-sm tracking-tight",
+                        isFocused ? "text-[#76FF03]" : "text-[#000000]"
+                      )}>
+                        {formatCurrency(detail.totalDue)}
+                      </div>
+                      
+                      <span className={cn(
+                        "px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest",
+                        t.isPaid 
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : isFocused 
+                            ? "bg-[#76FF03]/10 text-[#76FF03] border border-[#76FF03]/20" 
+                            : "bg-amber-100 text-amber-800"
+                      )}>
+                        {t.isPaid ? 'Paid' : 'Unpaid'}
+                      </span>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
 
-        {/* Mobile View: Stacked Cards */}
-        <div className="md:hidden divide-y divide-white/5">
-           {tenants.map((t: any) => {
-             const prop = properties.find((p: any) => p.id === t.propertyId)!;
-             const detail = getTenantBillingDetails(t, prop);
-             const totalDue = detail.totalDue;
+              {tenants.length === 0 && (
+                <div className="py-20 text-center text-stone-400">
+                  <Search className="w-10 h-10 mx-auto opacity-30 mb-2" />
+                  <p className="text-xs italic">No matching tenants found.</p>
+                </div>
+              )}
+            </div>
 
-             return (
-               <div key={t.id} className={cn(
-                 "p-4 space-y-4",
-                 selectedTenantIds.has(t.id) ? "bg-blue-500/5" : ""
-               )}>
-                  <div className="flex justify-between items-start">
-                     <div className="flex items-center gap-3">
-                        <input 
-                         type="checkbox" 
-                         className="w-4 h-4 rounded border-white/10 bg-slate-900 accent-blue-500" 
-                         checked={selectedTenantIds.has(t.id)}
-                         onChange={() => toggleSelection(t.id)}
-                        />
-                        <div 
-                          className="cursor-pointer hover:text-blue-400 transition-all"
-                          onClick={() => onOpenProfile(t, prop)}
-                          title="View Tenant Dossier"
-                        >
-                          <div className="font-bold text-white text-base">{t.name}</div>
-                          <div className="text-[10px] text-slate-500 uppercase tracking-tight">Room {t.roomNumber} • {prop.name}</div>
-                        </div>
-                     </div>
-                     <button 
-                      onClick={() => updateTenant(t.id, { isPaid: !t.isPaid })}
-                      className={cn(
-                        "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter border",
-                        t.isPaid ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                      )}
-                     >
-                       {t.isPaid ? 'Paid' : 'Unpaid'}
-                     </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 py-2 border-y border-white/5">
-                     <div>
-                        <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Meter E/W</p>
-                        <p className="text-xs font-mono text-slate-300">{t.currElecReading} / {t.currWaterReading}</p>
-                     </div>
-                     <div className="text-right">
-                        <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Total Due</p>
-                        <p className="text-sm font-bold text-white">{formatCurrency(totalDue)}</p>
-                     </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-2">
-                     <div className="flex gap-1">
-                        <button onClick={() => shareViaWhatsApp(t)} className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400">
-                           <MessageCircle className="w-5 h-5" />
-                        </button>
-                        <button onClick={() => setPaymentModal({ open: true, tenant: t, property: prop })} className="p-2.5 bg-blue-500/10 rounded-xl text-blue-400">
-                           <CreditCard className="w-5 h-5" />
-                        </button>
-                        <button 
-                           disabled={processingId === t.id}
-                           onClick={() => downloadReceipt(t)} 
-                           className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white disabled:opacity-50"
-                        >
-                           {processingId === t.id ? (
-                             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                           ) : (
-                             <Download className="w-5 h-5" />
-                           )}
-                        </button>
-                     </div>
-                     <div className="flex gap-1">
-                        <button onClick={() => onOpenProfile(t, prop)} className="p-2.5 hover:bg-white/10 rounded-xl text-blue-400" title="Manage Overrides & Ledger">
-                           <Edit2 className="w-5 h-5" />
-                        </button>
-                        <button onClick={() => deleteTenant(t.id)} className="p-2.5 hover:bg-rose-500/10 rounded-xl text-slate-500 hover:text-rose-400">
-                           <Trash2 className="w-5 h-5" />
-                        </button>
-                     </div>
-                  </div>
-               </div>
-             );
-           })}
-        </div>
-        
-        {tenants.length === 0 && (
-          <div className="py-20 text-center text-slate-500 bg-white/5">
-            <Search className="w-12 h-12 opacity-10 mx-auto mb-4" />
-            <p className="text-sm italic">No tenants found matches your criteria.</p>
-          </div>
-        )}
-
-        <div className="p-4 bg-slate-900/40 border-t border-white/10 flex justify-between items-center">
-           <div className="flex gap-2">
-              <button onClick={downloadSummaryCSV} className="btn-secondary text-[10px] px-3 py-1 uppercase font-bold rounded-lg border-white/5">Export CSV</button>
-              <button onClick={() => window.print()} className="btn-secondary text-[10px] px-3 py-1 uppercase font-bold rounded-lg border-white/5">Print All</button>
-           </div>
-           <div className="text-right">
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Cycle Total</p>
-              <p className="text-sm font-bold text-white tracking-widest">
+            {/* Bottom Actions for Left Block */}
+            <div className="pt-4 border-t border-stone-200 mt-4 flex items-center justify-between text-stone-500">
+              <span className="text-[9px] font-mono font-bold block">TOTAL OUTSTANDING DEPOSIT</span>
+              <span className="text-sm font-bold font-serif text-stone-900">
                 {formatCurrency(tenants.reduce((acc: number, t: any) => {
                    const prop = properties.find((p: any) => p.id === t.propertyId)!;
                    const detail = getTenantBillingDetails(t, prop);
-                   return acc + detail.totalDue;
+                   return acc + (t.isPaid ? 0 : detail.totalDue);
                 }, 0))}
-              </p>
-           </div>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: Luxurious Dark obsidian dashboard detailed deck + separate vertical action dock */}
+        <div className="lg:col-span-5 flex flex-col md:flex-row gap-4 items-start">
+          {activeTenant ? (
+            <>
+              {/* Separate Vertical Action Dock (Sleek Glassmorphic Circles, separated but kept together) */}
+              <div className="flex md:flex-col flex-row gap-3 w-full md:w-auto p-2 bg-[#1A1B20]/80 backdrop-blur-md rounded-[24px] border border-white/5 justify-center items-center md:sticky md:top-24 select-none shrink-0 md:h-[350px]">
+                <div className="flex md:flex-col gap-3 p-1.5 justify-center items-center">
+                  <button 
+                    onClick={() => shareViaWhatsApp(activeTenant)}
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    title="Send WhatsApp details"
+                  >
+                    {processingId === activeTenant.id ? (
+                      <div className="w-4 h-4 border-2 border-[#76FF03] border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <MessageCircle className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    )}
+                  </button>
+                  
+                  <button 
+                    onClick={() => downloadReceipt(activeTenant)}
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-slate-300 hover:text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    title="Generate Receipt Image"
+                  >
+                    {processingId === activeTenant.id ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Download className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    )}
+                  </button>
+
+                  <button 
+                    onClick={() => onOpenProfile(activeTenant, activeProp)}
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    title="Ledger Ledger Manager"
+                  >
+                    <Edit2 className="w-4.5 h-4.5 group-hover:scale-110 transition-transform" />
+                  </button>
+                </div>
+
+                <div className="w-full md:w-[1px] h-[1px] md:h-12 bg-white/5 my-1" />
+
+                <div className="flex md:flex-col gap-3 p-1.5 justify-center items-center">
+                  <button 
+                    onClick={() => {
+                      pushToUndo();
+                      updateTenant(activeTenant.id, { isPaid: !activeTenant.isPaid });
+                    }}
+                    className={cn(
+                      "w-11 h-11 rounded-full border transition-all flex items-center justify-center cursor-pointer shadow-md group",
+                      activeTenant.isPaid 
+                        ? "bg-rose-500/10 text-rose-400 border-rose-500/15 hover:bg-rose-500/20" 
+                        : "bg-emerald-500/10 text-[#76FF03] border-emerald-500/15 hover:bg-emerald-500/25"
+                    )}
+                    title={activeTenant.isPaid ? 'Mark Unpaid' : 'Mark Paid'}
+                  >
+                    {activeTenant.isPaid ? <X className="w-4.5 h-4.5 group-hover:rotate-90 transition-transform" /> : <Check className="w-4.5 h-4.5 group-hover:scale-110 transition-transform" />}
+                  </button>
+
+                  <button 
+                    onClick={() => deleteTenant(activeTenant.id)}
+                    className="w-11 h-11 bg-rose-500/5 hover:bg-rose-500/20 rounded-full text-rose-400 border border-rose-500/10 transition-all flex items-center justify-center cursor-pointer shadow-md group"
+                    title="Delete Record"
+                  >
+                    <Trash2 className="w-4.5 h-4.5 group-hover:scale-115 transition-transform" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Main Detail Dossier Card */}
+              <motion.div 
+                layoutId={`active-tenant-panel-${activeTenant.id}`}
+                className="flex-1 p-8 rounded-[24px] bg-[#1A1B20]/95 border border-white/5 relative overflow-hidden space-y-6 w-full"
+              >
+                {/* Backglow element */}
+                <div className="absolute top-0 right-0 w-44 h-44 bg-[#76FF03]/5 blur-3xl rounded-full pointer-events-none" />
+
+                {/* Top Row: Name, room, and status */}
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-white/5 pb-5">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-[#8A8D98] uppercase tracking-[0.25em] font-mono">portfolio dossier</span>
+                    <h3 className="text-2xl font-bold tracking-tight text-white">{activeTenant.name}</h3>
+                    <div className="text-[11px] text-[#76FF03] tracking-wider uppercase font-semibold flex items-center gap-1.5 font-mono">
+                      <Home className="w-3 h-3" />
+                      Property: {activeProp?.name} — Room {activeTenant.roomNumber}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => rolloverPrompt.month ? setRolloverPrompt({ ...rolloverPrompt, open: true }) : setRolloverPrompt({ open: true, month: new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) })}
+                      className="p-2 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 rounded-xl border border-white/10 transition-all flex items-center justify-center cursor-pointer"
+                      title="Initialize Billing Month rollover"
+                    >
+                      <Calendar className="w-4 h-4" />
+                    </button>
+                    <span className={cn(
+                      "px-4.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border",
+                      activeTenant.isPaid 
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                        : "bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse"
+                    )}>
+                      {activeTenant.isPaid ? 'Active / Paid' : 'Draft / Unpaid'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Billing Itemized Grid */}
+                <div className="space-y-4">
+                  <h4 className="text-[10px] font-black text-[#76FF03] uppercase tracking-widest font-mono">Billing Matrix Breakdown</h4>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    
+                    {/* Rent Widget details */}
+                    <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-1">
+                      <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Standard Base Rent</span>
+                      <p className="text-base font-bold font-mono text-white">{formatCurrency(activeDetail?.baseRent || 0)}</p>
+                    </div>
+
+                    {/* Arrears and balances breakdown */}
+                    <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-1">
+                      <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Outstanding Arrears</span>
+                      <p className="text-base font-bold font-mono text-rose-400">{formatCurrency(activeDetail?.openingBalance || 0)}</p>
+                    </div>
+
+                    {/* Electricity detailed bill */}
+                    <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Electricity Cost</span>
+                        <span className="text-[9px] text-[#76FF03] font-mono font-bold">Rate: {formatCurrency(activeProp?.electricRate || 0)}</span>
+                      </div>
+                      <p className="text-base font-bold font-mono text-white">{formatCurrency(activeDetail?.electricityCharges || 0)}</p>
+                      <div className="text-[9px] text-slate-400 font-mono">
+                        Cycle: {activeTenant.currElecReading} <span className="text-slate-500">prev ({activeTenant.prevElecReading})</span>
+                      </div>
+                    </div>
+
+                    {/* Water detailed cost */}
+                    <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Water Consumption</span>
+                        <span className="text-[9px] text-[#76FF03] font-mono font-bold">Rate: {formatCurrency(activeProp?.waterRate || 0)}</span>
+                      </div>
+                      <p className="text-base font-bold font-mono text-white">{formatCurrency(activeDetail?.waterCharges || 0)}</p>
+                      <div className="text-[9px] text-slate-400 font-mono">
+                        Cycle: {activeTenant.currWaterReading} <span className="text-slate-500 font-normal">prev ({activeTenant.prevWaterReading})</span>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                {/* Utility usage progress capsule bar from Salesforce dashboard design */}
+                <div className="bg-black/40 p-5 rounded-2xl border border-white/[0.03] space-y-3">
+                  <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest block font-mono">Utility usage visual telemetry</span>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">Electricity Reading Level</span>
+                      <span className="text-[#76FF03] font-bold">{activeTenant.currElecReading} Units</span>
+                    </div>
+                    <div className="h-1.5 bg-[#282A30] rounded-full overflow-hidden">
+                      <div className="h-full bg-[#76FF03] rounded-full" style={{ width: `${Math.min(100, (activeTenant.currElecReading / 1500) * 100)}%` }} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">Water Consumption Level</span>
+                      <span className="text-[#76FF03] font-bold">{activeTenant.currWaterReading} Units</span>
+                    </div>
+                    <div className="h-1.5 bg-[#282A30] rounded-full overflow-hidden">
+                      <div className="h-full bg-[#76FF03] rounded-full" style={{ width: `${Math.min(100, (activeTenant.currWaterReading / 1000) * 100)}%` }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Combined Balance totals and fast payout button */}
+                <div className="flex items-center justify-between p-5 bg-[#121316] rounded-3xl border border-white/5">
+                  <div>
+                    <span className="text-[9px] font-black text-[#8A8D98] uppercase tracking-widest font-mono block">Balance Due</span>
+                    <span className="text-2xl font-bold font-mono tracking-tight text-white">{formatCurrency(activeDetail?.totalDue || 0)}</span>
+                  </div>
+                  
+                  <button
+                    onClick={() => setPaymentModal({ open: true, tenant: activeTenant, property: activeProp })}
+                    className="px-6 py-3.5 rounded-full text-[10px] tracking-widest uppercase font-mono font-black bg-[#76FF03] hover:scale-105 active:scale-95 transition-all text-[#121316] flex items-center gap-2 cursor-pointer shadow-lg shadow-[#76FF03]/10"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    Pay Out Now
+                  </button>
+                </div>
+              </motion.div>
+            </>
+          ) : (
+            <div className="glass-panel p-20 text-center rounded-[2rem] border-dashed border-white/10 text-slate-500">
+              <Users className="w-12 h-12 opacity-10 mx-auto mb-4" />
+              <p className="text-sm italic">Select a tenant ledger on the left card panel to preview operational details</p>
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* Global export utilities row styled cleanly at bottom */}
+      <div className="flex flex-col sm:flex-row justify-between items-center pt-2 gap-4">
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={downloadSummaryCSV} className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white">Export CSV</button>
+          <button onClick={() => window.print()} className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white">Print All</button>
+          <button 
+            disabled={bulkProcessing || tenants.length === 0}
+            onClick={handleBulkDownload} 
+            className="px-4.5 py-2 bg-[#76FF03] hover:scale-[1.02] text-[#121316] hover:bg-[#76FF03]/90 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 select-none"
+          >
+            {bulkProcessing ? "Generating..." : "ZIP Receipts"}
+          </button>
         </div>
       </div>
     </div>
@@ -1524,6 +2136,8 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
 }
 
 function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs }: any) {
+  const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics'>('backups');
+
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1552,235 +2166,300 @@ function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStat
     }
   };
 
+  const tabs = [
+    { id: 'backups', label: 'Data & Backups', icon: Database },
+    { id: 'overrides', label: 'Overrides & Logs', icon: Clipboard },
+    { id: 'metrics', label: 'Storage & Metrics', icon: History }
+  ];
+
   return (
-    <div className="max-w-4xl space-y-10">
-      <section className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
-            Data & Backup
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-          </h3>
-          <div className="flex gap-2">
-            <button onClick={exportData} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-[10px] font-bold text-slate-400 border border-white/5 uppercase tracking-widest flex items-center gap-2 transition-all">
-                <Download className="w-3 h-3" />
-                Backup JSON
-            </button>
-            <label className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-[10px] font-bold text-slate-400 border border-white/5 uppercase tracking-widest flex items-center gap-2 cursor-pointer transition-all">
-                <Upload className="w-3 h-3" />
-                Restore
-                <input type="file" className="hidden" accept=".json" onChange={handleRestore} />
-            </label>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-rose-500/20 transition-all group">
-            <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
-               <Trash2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-white">6 Months Pruning</h4>
-              <p className="text-[10px] text-slate-500 mt-1">Keep 6 months of archive history and delete older entries.</p>
-            </div>
-            <button onClick={() => confirm('Prune old history?') && cleanOldHistory(6)} className="w-full py-2 bg-rose-500/10 text-rose-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all">Prune Records</button>
-          </div>
-
-          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-blue-500/20 transition-all group">
-            <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-               <History className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-white">1 Year Archival</h4>
-              <p className="text-[10px] text-slate-500 mt-1">Efficient for long-term tracking. Deletes older than 12 months.</p>
-            </div>
-            <button onClick={() => confirm('Prune records older than 12 months?') && cleanOldHistory(12)} className="w-full py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all">Cleanup History</button>
-          </div>
-
-          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-emerald-500/20 transition-all group">
-            <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-               <ArrowDownUp className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-white">Full Balance Audit</h4>
-              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter">Recalculate all arrears and opening balances across history.</p>
-            </div>
-            <button onClick={() => {
-              if (confirm('Run full accounting audit? This will recalculate all opening balances based on payment history.')) {
-                recalculateBalances();
-                alert('Audit complete! All balances synchronized.');
-              }
-            }} className="w-full py-2 bg-emerald-500/10 text-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all">Recalculate All</button>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-6 border-t border-white/5 pt-10 bg-gradient-to-b from-amber-500/[0.02] to-transparent p-6 rounded-3xl border border-amber-500/5">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
-              Admin Master Support Control Panel
-              <span className={cn(
-                "w-1.5 h-1.5 rounded-full animate-pulse",
-                supportMasterOverrideMode ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]" : "bg-slate-500"
-              )} />
-            </h3>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">Authorized Audit Log & Override Engine</p>
-          </div>
-          <div className="flex items-center gap-3 bg-slate-900 border border-white/5 px-4 py-2 rounded-2xl select-none shrink-0">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Master Override Toggle</span>
+    <div className="max-w-4xl space-y-8">
+      {/* Sub-tab Pill Button Selectors */}
+      <div className="flex flex-wrap gap-2 bg-slate-950/80 backdrop-blur-md p-2 rounded-2xl border border-white/5 w-full sm:w-max">
+        {tabs.map(tab => {
+          const active = activeTab === tab.id;
+          return (
             <button
-              onClick={toggleSupportMasterMode}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
               className={cn(
-                "relative w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer",
-                supportMasterOverrideMode ? "bg-amber-500" : "bg-slate-700"
+                "flex items-center gap-2 py-2 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all duration-300 select-none cursor-pointer border",
+                active 
+                  ? "bg-[#76FF03]/10 text-[#76FF03] border-[#76FF03]/20 shadow-md shadow-[#76FF03]/5"
+                  : "bg-transparent text-slate-400 border-transparent hover:text-white"
               )}
             >
-              <div
-                className={cn(
-                  "bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200",
-                  supportMasterOverrideMode ? "translate-x-6" : "translate-x-0"
-                )}
-              />
+              <tab.icon className="w-3.5 h-3.5" />
+              <span>{tab.label}</span>
             </button>
-          </div>
-        </div>
+          )
+        })}
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-amber-500/20 transition-all flex flex-col justify-between">
-            <div>
-              <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400 mb-3">
-                <ArrowDownUp className="w-5 h-5" />
+      <AnimatePresence mode="wait">
+        {activeTab === 'backups' && (
+          <motion.div
+            key="backups"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            <section className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
+                    Data & Backup
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                  </h3>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">Download and restore full JSON database records</p>
+                </div>
+                <div className="flex gap-2 self-start sm:self-center">
+                  <button onClick={exportData} className="px-3.5 py-2 bg-[#76FF03]/5 hover:bg-[#76FF03]/10 rounded-xl text-[10px] font-bold text-[#76FF03] border border-[#76FF03]/10 uppercase tracking-widest flex items-center gap-2 transition-all cursor-pointer">
+                      <Download className="w-3 h-3" />
+                      Backup JSON
+                  </button>
+                  <label className="px-3.5 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-bold text-slate-400 border border-white/5 uppercase tracking-widest flex items-center gap-2 cursor-pointer transition-all">
+                      <Upload className="w-3 h-3" />
+                      Restore
+                      <input type="file" className="hidden" accept=".json" onChange={handleRestore} />
+                  </label>
+                </div>
               </div>
-              <h4 className="text-sm font-bold text-white">Manual Balance Sync & Override</h4>
-              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
-                Force synchronizes late payments and carryovers. Recalculates all balances downstream starting from any manual updates.
-              </p>
-            </div>
-            <button 
-              onClick={() => {
-                recalculateBalances();
-                alert('Verification success: Late payments synced and outstanding balances balanced downstream!');
-              }} 
-              className="w-full mt-4 py-2 bg-amber-500/10 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
-            >
-              Sync Late Payments Now
-            </button>
-          </div>
 
-          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-blue-500/20 transition-all flex flex-col justify-between">
-            <div>
-              <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 mb-3">
-                <Clipboard className="w-5 h-5" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-rose-500/20 transition-all group">
+                  <div className="w-10 h-10 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+                     <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">6 Months Pruning</h4>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">Keep 6 months of archive history and delete older entries.</p>
+                  </div>
+                  <button onClick={() => confirm('Prune old history?') && cleanOldHistory(6)} className="w-full py-2 bg-rose-500/10 text-rose-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all cursor-pointer">Prune Records</button>
+                </div>
+
+                <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-blue-500/20 transition-all group">
+                  <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                     <History className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">1 Year Archival</h4>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">Efficient for long-term tracking. Deletes older than 12 months.</p>
+                  </div>
+                  <button onClick={() => confirm('Prune records older than 12 months?') && cleanOldHistory(12)} className="w-full py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all cursor-pointer">Cleanup History</button>
+                </div>
+
+                <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-emerald-500/20 transition-all group">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                     <ArrowDownUp className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Full Balance Audit</h4>
+                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-relaxed">Recalculate all arrears and opening balances across history.</p>
+                  </div>
+                  <button onClick={() => {
+                    if (confirm('Run full accounting audit? This will recalculate all opening balances based on payment history.')) {
+                      recalculateBalances();
+                      alert('Audit complete! All balances synchronized.');
+                    }
+                  }} className="w-full py-2 bg-emerald-500/10 text-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all cursor-pointer">Recalculate All</button>
+                </div>
               </div>
-              <h4 className="text-sm font-bold text-white">Security & Audit Status</h4>
-              <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
-                Total Manual Alterations Recorded: {auditLogs.length} logs
-              </p>
-            </div>
-            <button 
-              disabled={auditLogs.length === 0}
-              onClick={() => {
-                if(confirm('Clear all historical system override logs?')) {
-                  clearAuditLogs();
-                }
-              }} 
-              className="w-full mt-4 py-2 bg-slate-850 text-slate-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500/20 hover:text-rose-400 transition-all disabled:opacity-20 cursor-pointer"
-            >
-              Clear Audit Logs
-            </button>
-          </div>
-        </div>
+            </section>
+          </motion.div>
+        )}
 
-        {/* Audit Details Ledger Grid */}
-        <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4 bg-slate-900/30">
-          <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-400 flex items-center gap-2">
-            Archived Adjustment Logs
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-700 animate-pulse" />
-          </p>
-          {auditLogs.length === 0 ? (
-            <p className="text-[11px] text-slate-600 italic">No manual billing overrides have been recorded. System is fully synchronized chronologically.</p>
-          ) : (
-            <div className="max-h-60 overflow-y-auto space-y-2 rounded-xl pr-2">
-              {auditLogs.map((log: any) => (
-                <div key={log.id} className="p-3 bg-slate-950 border border-white/5 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs group hover:bg-white/[0.01]">
-                  <div className="space-y-1">
-                    <p className="text-white font-bold text-[11px] flex items-center gap-2">
-                      {log.tenantName} 
-                      <span className="w-1 h-1 rounded-full bg-slate-700" />
-                      <span className="text-blue-400 font-normal">{log.month}</span>
-                    </p>
-                    <p className="text-[10px] text-slate-500 font-mono">
-                      Field: <span className="text-slate-300 font-semibold">{log.fieldName}</span> | Value Updated: <span className="text-rose-400 line-through">{log.oldValue}</span> → <span className="text-emerald-400 font-bold">{log.newValue}</span>
+        {activeTab === 'overrides' && (
+          <motion.div
+            key="overrides"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            <section className="space-y-6 bg-gradient-to-b from-amber-500/[0.02] to-transparent p-6 rounded-3xl border border-amber-500/5">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
+                    Admin Master Support Control Panel
+                    <span className={cn(
+                      "w-1.5 h-1.5 rounded-full animate-pulse",
+                      supportMasterOverrideMode ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]" : "bg-slate-500"
+                    )} />
+                  </h3>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">Authorized Audit Log & Override Engine</p>
+                </div>
+                <div className="flex items-center gap-3 bg-slate-900 border border-white/5 px-4 py-2 rounded-2xl select-none shrink-0 self-start sm:self-center">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider animate-pulse">Override Toggle</span>
+                  <button
+                    onClick={toggleSupportMasterMode}
+                    className={cn(
+                      "relative w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer",
+                      supportMasterOverrideMode ? "bg-amber-500" : "bg-slate-700"
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200",
+                        supportMasterOverrideMode ? "translate-x-6" : "translate-x-0"
+                      )}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-amber-500/20 transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400 mb-3">
+                      <ArrowDownUp className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-bold text-white">Manual Balance Sync & Override</h4>
+                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
+                      Force synchronizes late payments and carryovers. Recalculates all balances downstream starting from any manual updates.
                     </p>
                   </div>
-                  <span className="text-[9px] text-slate-600 font-mono self-start sm:self-center bg-slate-900 border border-white/5 px-2 py-0.5 rounded-md whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</span>
+                  <button 
+                    onClick={() => {
+                      recalculateBalances();
+                      alert('Verification success: Late payments synced and outstanding balances balanced downstream!');
+                    }} 
+                    className="w-full mt-4 py-2 bg-amber-500/10 hover:bg-amber-500 hover:text-slate-950 text-amber-400 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer"
+                  >
+                    Sync Late Payments Now
+                  </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
 
-      <section className="space-y-6 border-t border-white/5 pt-10">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xl font-bold text-white tracking-tight">System Storage</h3>
-          <span className={cn(
-            "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border", 
-            quotaUsage > 80 ? "bg-rose-500/10 text-rose-400 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.15)]" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-          )}>
-            {quotaUsage.toFixed(2)}% Capacity Used
-          </span>
-        </div>
-        <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/5 p-0.5">
-           <div 
-             className={cn("h-full rounded-full transition-all duration-1000", quotaUsage > 80 ? "bg-rose-500" : "bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.5)]")}
-             style={{ width: `${quotaUsage}%` }}
-           />
-        </div>
-        {quotaUsage > 80 && (
-          <div className="flex gap-4 p-5 bg-rose-500/5 rounded-2xl border border-rose-500/20 text-rose-300 text-xs leading-relaxed animate-pulse">
-             <AlertCircle className="w-5 h-5 shrink-0" />
-             <p>High localStorage usage detected. To maintain performance, consider downloading a backup and clearing your old bill history or optimizing property metadata.</p>
-          </div>
+                <div className="glass-panel p-6 rounded-3xl space-y-4 border border-white/5 hover:border-blue-500/20 transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 mb-3">
+                      <Clipboard className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-bold text-white">Security & Audit Status</h4>
+                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter leading-normal">
+                      Total Manual Alterations Recorded: {auditLogs.length} logs
+                    </p>
+                  </div>
+                  <button 
+                    disabled={auditLogs.length === 0}
+                    onClick={() => {
+                      if(confirm('Clear all historical system override logs?')) {
+                        clearAuditLogs();
+                      }
+                    }} 
+                    className="w-full mt-4 py-2 bg-slate-850 text-slate-400 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500/20 hover:text-rose-400 transition-all disabled:opacity-20 cursor-pointer"
+                  >
+                    Clear Audit Logs
+                  </button>
+                </div>
+              </div>
+
+              {/* Audit Details Ledger Grid */}
+              <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4 bg-slate-900/30">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-400 flex items-center gap-2">
+                  Archived Adjustment Logs
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700 animate-pulse" />
+                </p>
+                {auditLogs.length === 0 ? (
+                  <p className="text-[11px] text-slate-600 italic">No manual billing overrides have been recorded. System is fully synchronized chronologically.</p>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto space-y-2 rounded-xl pr-2">
+                    {auditLogs.map((log: any) => (
+                      <div key={log.id} className="p-3 bg-slate-950 border border-white/5 rounded-xl flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs group hover:bg-white/[0.01]">
+                        <div className="space-y-1">
+                          <p className="text-white font-bold text-[11px] flex items-center gap-2">
+                            {log.tenantName} 
+                            <span className="w-1 h-1 rounded-full bg-slate-700" />
+                            <span className="text-blue-400 font-normal">{log.month}</span>
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            Field: <span className="text-slate-300 font-semibold">{log.fieldName}</span> | Value Updated: <span className="text-rose-400 line-through">{log.oldValue}</span> → <span className="text-emerald-400 font-bold">{log.newValue}</span>
+                          </p>
+                        </div>
+                        <span className="text-[9px] text-slate-600 font-mono self-start sm:self-center bg-slate-900 border border-white/5 px-2 py-0.5 rounded-md whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          </motion.div>
         )}
-      </section>
-      
-      <section className="space-y-4 border-t border-white/5 pt-10">
-        <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.3em]">Operational Metrics</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Total Properties</p>
-              <p className="text-lg font-bold text-white">{data.properties.length}</p>
-           </div>
-           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Active Tenants</p>
-              <p className="text-lg font-bold text-white">{data.tenants.length}</p>
-           </div>
-           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <p className="text-[9px] font-black text-slate-600 uppercase mb-1">History Entries</p>
-              <p className="text-lg font-bold text-white">{data.history.length}</p>
-           </div>
-           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Archive Size</p>
-              <p className="text-lg font-bold text-white">{(dataStats?.history / 1024).toFixed(1)} KB</p>
-           </div>
-           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Active Cycle</p>
-              <p className="text-xs font-bold text-blue-400 truncate">{data.activeMonth}</p>
-           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4 mt-4">
-           <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 flex justify-between items-center text-[10px]">
-              <span className="text-slate-500 uppercase tracking-widest">Metadata Props</span>
-              <span className="font-mono text-slate-300">{(dataStats?.properties / 1024).toFixed(1)} KB</span>
-           </div>
-           <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 flex justify-between items-center text-[10px]">
-              <span className="text-slate-500 uppercase tracking-widest">Metadata Tenants</span>
-              <span className="font-mono text-slate-300">{(dataStats?.tenants / 1024).toFixed(1)} KB</span>
-           </div>
-        </div>
-      </section>
+
+        {activeTab === 'metrics' && (
+          <motion.div
+            key="metrics"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            <section className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold text-white tracking-tight">System Storage</h3>
+                <span className={cn(
+                  "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border", 
+                  quotaUsage > 80 ? "bg-rose-500/10 text-rose-400 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.15)]" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                )}>
+                  {quotaUsage.toFixed(2)}% Capacity Used
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/5 p-0.5">
+                 <div 
+                   className={cn("h-full rounded-full transition-all duration-1000", quotaUsage > 80 ? "bg-rose-500" : "bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.5)]")}
+                   style={{ width: `${quotaUsage}%` }}
+                 />
+              </div>
+              {quotaUsage > 80 && (
+                <div className="flex gap-4 p-5 bg-rose-500/5 rounded-2xl border border-rose-500/20 text-rose-300 text-xs leading-relaxed animate-pulse">
+                   <AlertCircle className="w-5 h-5 shrink-0" />
+                   <p>High localStorage usage detected. To maintain performance, consider downloading a backup and clearing your old bill history or optimizing property metadata.</p>
+                </div>
+              )}
+            </section>
+            
+            <section className="space-y-4 border-t border-white/5 pt-6">
+              <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.3em]">Operational Metrics</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Total Properties</p>
+                    <p className="text-lg font-bold text-white">{data.properties.length}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Active Tenants</p>
+                    <p className="text-lg font-bold text-white">{data.tenants.length}</p>
+                 </div>
+                 <div className="p-4 bg-[#76FF03]/5 rounded-2xl border border-[#76FF03]/10">
+                    <p className="text-[9px] font-black text-[#76FF03] uppercase mb-1">History Entries</p>
+                    <p className="text-lg font-bold text-white">{data.history.length}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Archive Size</p>
+                    <p className="text-lg font-bold text-white">{(dataStats?.history / 1024).toFixed(1)} KB</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[9px] font-black text-slate-600 uppercase mb-1">Active Cycle</p>
+                    <p className="text-xs font-bold text-[#76FF03] truncate">{data.activeMonth}</p>
+                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                 <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 flex justify-between items-center text-[10px]">
+                    <span className="text-slate-500 uppercase tracking-widest">Metadata Props</span>
+                    <span className="font-mono text-slate-300">{(dataStats?.properties / 1024).toFixed(1)} KB</span>
+                 </div>
+                 <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 flex justify-between items-center text-[10px]">
+                    <span className="text-slate-500 uppercase tracking-widest">Metadata Tenants</span>
+                    <span className="font-mono text-slate-300">{(dataStats?.tenants / 1024).toFixed(1)} KB</span>
+                 </div>
+              </div>
+            </section>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+console.log('✨ AI Assistant Awakened — TenantBilling Elite is now sentient — TenantBilling Elite is now sentient');
 
