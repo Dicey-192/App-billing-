@@ -137,15 +137,26 @@ export function useStorage() {
                 const bVal = envelope.data[STORAGE_KEY];
                 let decodedJson: string;
                 try {
-                  decodedJson = decodeURIComponent(escape(atob(bVal)));
+                  // Try parsing as raw JSON first
+                  const parsedRaw = JSON.parse(bVal);
+                  if (parsedRaw && typeof parsedRaw === 'object' && 'payload' in parsedRaw) {
+                    saved = parsedRaw.payload;
+                  } else {
+                    saved = parsedRaw;
+                  }
                 } catch {
-                  decodedJson = atob(bVal);
-                }
-                const parsed = JSON.parse(decodedJson);
-                if (parsed && typeof parsed === 'object' && 'payload' in parsed) {
-                  saved = parsed.payload;
-                } else {
-                  saved = parsed;
+                  // Fallback to base64 decode
+                  try {
+                    decodedJson = decodeURIComponent(escape(atob(bVal)));
+                  } catch {
+                    decodedJson = atob(bVal);
+                  }
+                  const parsed = JSON.parse(decodedJson);
+                  if (parsed && typeof parsed === 'object' && 'payload' in parsed) {
+                    saved = parsed.payload;
+                  } else {
+                    saved = parsed;
+                  }
                 }
                 console.log('[useStorage] Successfully recovered data from EMERGENCY_BACKUP.');
               }
@@ -162,11 +173,38 @@ export function useStorage() {
           }
           setData(saved);
         } else {
+          // Double check: does localStorage actually have keys?
+          // If the DB already has keys, but for some reason we got null here, DO NOT overwrite with INITIAL_DATA!
+          const hasKeys = Object.keys(localStorage).some(k => k.startsWith('_nexum_db_'));
+          if (hasKeys) {
+            console.error('[useStorage] Database has existing keys but get returned null! Blocking state reset to prevent data loss.');
+            // Try to reconstruct directly from primary localStorage
+            try {
+              const rawVal = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
+              if (rawVal) {
+                const parsed = JSON.parse(rawVal);
+                const payload = (parsed && typeof parsed === 'object' && 'payload' in parsed) ? parsed.payload : parsed;
+                if (payload && (payload.properties || payload.tenants)) {
+                  setData(payload);
+                  return;
+                }
+              }
+            } catch (reconstructErr) {
+              console.error('[useStorage] Direct reconstruct failed:', reconstructErr);
+            }
+            throw new Error('Database has keys but load failed. Reset blocked.');
+          }
           setData(INITIAL_DATA);
         }
       } catch (e) {
         console.error('Failed to parse storage data from BackendDB', e);
-        setData(INITIAL_DATA);
+        // Do NOT overwrite with INITIAL_DATA if we already have keys!
+        const hasKeys = Object.keys(localStorage).some(k => k.startsWith('_nexum_db_'));
+        if (!hasKeys) {
+          setData(INITIAL_DATA);
+        } else {
+          console.warn('[useStorage] Keeping existing state and blocking reset during error.');
+        }
       } finally {
         setIsLoading(false);
       }

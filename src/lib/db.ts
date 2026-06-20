@@ -24,15 +24,20 @@ export class BackendDB {
             const mapKey = key.slice(this.storageKeyPrefix.length);
             primaryDataMap.set(mapKey, val);
             
-            // Try extracting target timestamp to compare
+            // Try extracting target timestamp to compare robustly
             try {
-              let decodedJson: string;
+              let parsed: any = null;
               try {
-                decodedJson = decodeURIComponent(escape(atob(val)));
+                parsed = JSON.parse(val);
               } catch {
-                decodedJson = atob(val);
+                let decodedJson: string;
+                try {
+                  decodedJson = decodeURIComponent(escape(atob(val)));
+                } catch {
+                  decodedJson = atob(val);
+                }
+                parsed = JSON.parse(decodedJson);
               }
-              const parsed = JSON.parse(decodedJson);
               if (parsed && typeof parsed === 'object' && '_timestamp' in parsed) {
                 if (parsed._timestamp > newestPrimaryTimestamp) {
                   newestPrimaryTimestamp = parsed._timestamp;
@@ -182,16 +187,21 @@ export class BackendDB {
     }
     if (!data) return null;
     try {
-      let decodedJson: string;
+      let parsed: any = null;
       try {
-        // Try decoding with reverse encodeURIComponent escape sequence for full unicode safety
-        decodedJson = decodeURIComponent(escape(atob(data)));
-      } catch (e) {
-        // Fallback to normal atob in case it wasn't saved with escape/unescape or unicode-safety wrapper
-        decodedJson = atob(data);
+        parsed = JSON.parse(data);
+      } catch {
+        let decodedJson: string;
+        try {
+          decodedJson = decodeURIComponent(escape(atob(data)));
+        } catch {
+          decodedJson = atob(data);
+        }
+        parsed = JSON.parse(decodedJson);
       }
-      const parsed = JSON.parse(decodedJson);
-      
+
+      if (!parsed) return null;
+
       // Handle timestamped envelope structures cleanly
       if (parsed && typeof parsed === 'object' && 'payload' in parsed && '_timestamp' in parsed) {
         return structuredClone(parsed.payload) as T;
@@ -211,17 +221,16 @@ export class BackendDB {
         payload: structuredClone(value)
       };
       const stringified = JSON.stringify(envelope);
-      const encoded = btoa(unescape(encodeURIComponent(stringified))); // Safe for unicode
-      this.#data.set(key, encoded);
+      this.#data.set(key, stringified);
       
       let primaryFailed = false;
       try {
-        localStorage.setItem(this.storageKeyPrefix + key, encoded);
+        localStorage.setItem(this.storageKeyPrefix + key, stringified);
         
-        // Immediate save verification: reading back same key and comparing lengths
+        // Immediate save verification
         const readBack = localStorage.getItem(this.storageKeyPrefix + key);
-        if (!readBack || readBack.length !== encoded.length) {
-          console.error(`[BackendDB] Immediate save verification failed for key: ${key}. Expected: ${encoded.length}, Got: ${readBack ? readBack.length : 0}`);
+        if (!readBack || readBack.length !== stringified.length) {
+          console.error(`[BackendDB] Immediate save verification failed for key: ${key}. Expected: ${stringified.length}`);
           primaryFailed = true;
         }
       } catch (err) {

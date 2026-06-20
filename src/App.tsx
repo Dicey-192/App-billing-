@@ -239,7 +239,7 @@ import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, Roll
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
-  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs } = useStorage();
+  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading } = useStorage();
 
   // Authentication role states
   const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>({ email: 'me.ansari.aatif@gmail.com', role: 'owner' });
@@ -887,6 +887,22 @@ export default function App() {
   };
 
   const paletteResults = searchPaletteItems();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen bg-[#070A13] items-center justify-center text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
+        {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
+        <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
+          <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-[#76FF03]/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
+        </div>
+        <div className="relative flex flex-col items-center space-y-4 z-10">
+          <div className="w-12 h-12 rounded-full border-4 border-t-transparent border-[#76FF03] animate-spin shadow-lg shadow-[#76FF03]/20" />
+          <p className="text-xs font-mono tracking-widest text-[#8A8D98] uppercase">Loading Administrative Hub...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
