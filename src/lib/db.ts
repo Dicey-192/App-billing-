@@ -6,6 +6,8 @@ export class BackendDB {
 
   constructor() {
     this.init();
+    this.requestPersistence();
+    this.setupAutoSaveListeners();
   }
 
   private init() {
@@ -23,6 +25,67 @@ export class BackendDB {
       }
     } catch (e) {
       console.error('Failed to load storage into BackendDB', e);
+    }
+  }
+
+  private async requestPersistence(): Promise<void> {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+        const persisted = await navigator.storage.persisted();
+        if (!persisted) {
+          const granted = await navigator.storage.persist();
+          console.log(`[BackendDB] Requested Storage API persistence: granted=${granted}`);
+        } else {
+          console.log('[BackendDB] Storage API persistence already active.');
+        }
+      }
+    } catch (e) {
+      console.warn('[BackendDB] Storage API persistence request failed:', e);
+    }
+  }
+
+  private setupAutoSaveListeners(): void {
+    if (typeof window === 'undefined') return;
+
+    const handleFlush = () => {
+      this.flush().catch(err => {
+        console.error('[BackendDB] Auto-save flush on lifecycle event failed:', err);
+      });
+    };
+
+    // Listen to page unload and visibility changes to flush state
+    window.addEventListener('beforeunload', handleFlush);
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        handleFlush();
+      }
+    });
+  }
+
+  async flush(): Promise<boolean> {
+    try {
+      let allPassed = true;
+      for (const [key, encoded] of this.#data.entries()) {
+        try {
+          localStorage.setItem(this.storageKeyPrefix + key, encoded);
+        } catch (e) {
+          console.error(`[BackendDB] Error writing key ${key} during flush:`, e);
+          allPassed = false;
+        }
+      }
+      
+      // Attempt to check Storage API status during active flush
+      if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+        const estimate = await navigator.storage.estimate();
+        const usageMb = estimate.usage ? (estimate.usage / (1024 * 1024)).toFixed(2) : '0';
+        const quotaMb = estimate.quota ? (estimate.quota / (1024 * 1024)).toFixed(2) : '100';
+        console.log(`[BackendDB] Storage health estimate: ${usageMb}MB used / ${quotaMb}MB total quota`);
+      }
+      
+      return allPassed;
+    } catch (e) {
+      console.error('[BackendDB] Flush operation unexpected failure:', e);
+      return false;
     }
   }
 
@@ -64,6 +127,9 @@ export class BackendDB {
       const encoded = btoa(unescape(encodeURIComponent(stringified))); // Safe for unicode
       this.#data.set(key, encoded);
       localStorage.setItem(this.storageKeyPrefix + key, encoded);
+      
+      // Guarantee durability on every write
+      await this.flush();
     } catch (e) {
       console.error('BackendDB set error for key:', key, e);
     }
@@ -72,6 +138,9 @@ export class BackendDB {
   async delete(key: string): Promise<void> {
     this.#data.delete(key);
     localStorage.removeItem(this.storageKeyPrefix + key);
+    
+    // Guarantee durability on delete
+    await this.flush();
   }
 }
 

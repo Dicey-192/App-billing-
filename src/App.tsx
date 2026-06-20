@@ -889,7 +889,7 @@ export default function App() {
   const paletteResults = searchPaletteItems();
 
   return (
-    <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none">
+    <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
       {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
@@ -1242,6 +1242,24 @@ export default function App() {
           if (!prop) return null;
           return <ReceiptTemplate key={t.id} property={prop} tenant={t} month="Current Cycle" />;
         })}
+      </div>
+
+      {/* On-screen Print wrapper only displayed using CSS @media print */}
+      <div id="print-receipts-container" className="hidden print:block print:bg-white text-black p-0 m-0" aria-hidden="true">
+        {(() => {
+          const targets = selectedTenantIds && selectedTenantIds.size > 0 
+            ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
+            : tenants;
+          return targets.map((t: any) => {
+            const prop = properties.find((p: any) => p.id === t.propertyId);
+            if (!prop) return null;
+            return (
+              <div key={t.id} className="print-page bg-white p-4 mb-8 break-after-page page-break-after-always">
+                <ReceiptTemplate property={prop} tenant={t} month={data.activeMonth || "Current Cycle"} />
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {/* Sentient AI Concierge Assistant "Aurelia" */}
@@ -2068,7 +2086,11 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     const folder = zip.folder("receipts");
     
     try {
-      for (const tenant of tenants) {
+      const targets = selectedTenantIds && selectedTenantIds.size > 0 
+        ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
+        : tenants;
+
+      for (const tenant of targets) {
         const element = document.getElementById(`receipt-${tenant.id}`);
         if (element) {
           const canvas = await safeHtml2Canvas(element, { 
@@ -2600,13 +2622,26 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
       <div className="flex flex-col sm:flex-row justify-between items-center pt-2 gap-4">
         <div className="flex gap-2 w-full sm:w-auto">
           <button onClick={downloadSummaryCSV} className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white">Export CSV</button>
-          <button onClick={() => window.print()} className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white">Print All</button>
+          <button 
+            onClick={() => window.print()} 
+            className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white"
+          >
+            {selectedTenantIds && selectedTenantIds.size > 0 
+              ? `Print Selected (${selectedTenantIds.size})` 
+              : "Print All"
+            }
+          </button>
           <button 
             disabled={bulkProcessing || tenants.length === 0}
             onClick={handleBulkDownload} 
             className="px-4.5 py-2 bg-[#76FF03] hover:scale-[1.02] text-[#121316] hover:bg-[#76FF03]/90 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 select-none"
           >
-            {bulkProcessing ? "Generating..." : "ZIP Receipts"}
+            {bulkProcessing 
+              ? "Generating..." 
+              : selectedTenantIds && selectedTenantIds.size > 0 
+                ? `ZIP Selected (${selectedTenantIds.size})` 
+                : "ZIP Receipts"
+            }
           </button>
         </div>
       </div>

@@ -203,16 +203,43 @@
 
   /* True Clean Statement Print CSS rules */
   @media print {
-    .no-print,
-    #assistant-trigger,
-    aside,
-    nav {
+    /* Hide all screen components to maintain 100% white-canvas clean printouts */
+    .screen-container > :not(#print-receipts-container) {
       display: none !important;
     }
     
+    .screen-container {
+      display: block !important;
+      background: #FFFFFF !important;
+      color: #0F172A !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      overflow: visible !important;
+    }
+
     body {
       background: #FFFFFF !important;
       color: #0F172A !important;
+    }
+
+    #print-receipts-container {
+      display: block !important;
+      width: 100% !important;
+      background: #FFFFFF !important;
+      color: #0F172A !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      position: static !important;
+    }
+
+    .print-page {
+      page-break-after: always !important;
+      break-after: page !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      background: #FFFFFF !important;
     }
 
     .receipt-card {
@@ -220,11 +247,11 @@
       background: #FFFFFF !important;
       color: #0F172A !important;
       box-shadow: none !important;
-      margin: 0 !important;
+      margin: 0 auto !important;
       width: 100% !important;
       max-width: 100% !important;
       position: static !important;
-      padding: 0 !important;
+      padding: 24px !important;
     }
 
     .receipt-card [class*="absolute"] {
