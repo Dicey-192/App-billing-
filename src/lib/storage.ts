@@ -115,101 +115,83 @@ export function performRecalculation(prev: AppData): AppData {
 }
 
 export function useStorage() {
-  const [data, setData] = useState<AppData>(INITIAL_DATA);
-  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState<AppData>(() => {
+    try {
+      const stored = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
+      if (stored) {
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(stored);
+        } catch {
+          let decodedJson: string;
+          try {
+            decodedJson = decodeURIComponent(escape(atob(stored)));
+          } catch {
+            decodedJson = atob(stored);
+          }
+          parsed = JSON.parse(decodedJson);
+        }
+        if (parsed) {
+          let saved: any = null;
+          if (typeof parsed === 'object' && 'payload' in parsed && '_timestamp' in parsed) {
+            saved = parsed.payload;
+          } else {
+            saved = parsed;
+          }
+          if (saved) {
+            if (!saved.subscriptionPlan) {
+              saved.subscriptionPlan = INITIAL_PLAN;
+            }
+            return saved;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[useStorage] Direct localStorage load failed:', e);
+    }
+
+    // Emergency backup check
+    try {
+      const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
+      if (backupStr) {
+        const envelope = JSON.parse(backupStr);
+        if (envelope && envelope.data && envelope.data[STORAGE_KEY]) {
+          const bVal = envelope.data[STORAGE_KEY];
+          let parsedRaw: any = null;
+          try {
+            parsedRaw = JSON.parse(bVal);
+          } catch {
+            let decodedJson: string;
+            try {
+              decodedJson = decodeURIComponent(escape(atob(bVal)));
+            } catch {
+              decodedJson = atob(bVal);
+            }
+            parsedRaw = JSON.parse(decodedJson);
+          }
+          const saved = (parsedRaw && typeof parsedRaw === 'object' && 'payload' in parsedRaw) ? parsedRaw.payload : parsedRaw;
+          if (saved) {
+            if (!saved.subscriptionPlan) {
+              saved.subscriptionPlan = INITIAL_PLAN;
+            }
+            return saved;
+          }
+        }
+      }
+    } catch (fallbackErr) {
+      console.error('[useStorage] Emergency backup load failed:', fallbackErr);
+    }
+
+    return INITIAL_DATA;
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
   const [quotaUsage, setQuotaUsage] = useState(0);
   const [dataStats, setDataStats] = useState({ properties: 0, tenants: 0, history: 0 });
 
-  // Asynchronously load data on mount
+  // No loading sequence needed as state is loaded synchronously on initiation!
   useEffect(() => {
-    async function initStorage() {
-      try {
-        let saved = await db.get<AppData>(STORAGE_KEY);
-        
-        // Double-safe fallback: if primary load returned null, try to load from EMERGENCY_BACKUP
-        if (!saved) {
-          console.warn('[useStorage] Primary load returned null. Attempting emergency fallback...');
-          const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
-          if (backupStr) {
-            try {
-              const envelope = JSON.parse(backupStr);
-              if (envelope && envelope.data && envelope.data[STORAGE_KEY]) {
-                const bVal = envelope.data[STORAGE_KEY];
-                let decodedJson: string;
-                try {
-                  // Try parsing as raw JSON first
-                  const parsedRaw = JSON.parse(bVal);
-                  if (parsedRaw && typeof parsedRaw === 'object' && 'payload' in parsedRaw) {
-                    saved = parsedRaw.payload;
-                  } else {
-                    saved = parsedRaw;
-                  }
-                } catch {
-                  // Fallback to base64 decode
-                  try {
-                    decodedJson = decodeURIComponent(escape(atob(bVal)));
-                  } catch {
-                    decodedJson = atob(bVal);
-                  }
-                  const parsed = JSON.parse(decodedJson);
-                  if (parsed && typeof parsed === 'object' && 'payload' in parsed) {
-                    saved = parsed.payload;
-                  } else {
-                    saved = parsed;
-                  }
-                }
-                console.log('[useStorage] Successfully recovered data from EMERGENCY_BACKUP.');
-              }
-            } catch (fallbackErr) {
-              console.error('[useStorage] Emergency backup parse failed:', fallbackErr);
-            }
-          }
-        }
-
-        if (saved) {
-          // Backward compatibility check for plans
-          if (!saved.subscriptionPlan) {
-            saved.subscriptionPlan = INITIAL_PLAN;
-          }
-          setData(saved);
-        } else {
-          // Double check: does localStorage actually have keys?
-          // If the DB already has keys, but for some reason we got null here, DO NOT overwrite with INITIAL_DATA!
-          const hasKeys = Object.keys(localStorage).some(k => k.startsWith('_nexum_db_'));
-          if (hasKeys) {
-            console.error('[useStorage] Database has existing keys but get returned null! Blocking state reset to prevent data loss.');
-            // Try to reconstruct directly from primary localStorage
-            try {
-              const rawVal = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
-              if (rawVal) {
-                const parsed = JSON.parse(rawVal);
-                const payload = (parsed && typeof parsed === 'object' && 'payload' in parsed) ? parsed.payload : parsed;
-                if (payload && (payload.properties || payload.tenants)) {
-                  setData(payload);
-                  return;
-                }
-              }
-            } catch (reconstructErr) {
-              console.error('[useStorage] Direct reconstruct failed:', reconstructErr);
-            }
-            throw new Error('Database has keys but load failed. Reset blocked.');
-          }
-          setData(INITIAL_DATA);
-        }
-      } catch (e) {
-        console.error('Failed to parse storage data from BackendDB', e);
-        // Do NOT overwrite with INITIAL_DATA if we already have keys!
-        const hasKeys = Object.keys(localStorage).some(k => k.startsWith('_nexum_db_'));
-        if (!hasKeys) {
-          setData(INITIAL_DATA);
-        } else {
-          console.warn('[useStorage] Keeping existing state and blocking reset during error.');
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    initStorage();
+    setIsLoading(false);
   }, []);
 
   // Save data to BackendDB when changes occur
