@@ -23,7 +23,7 @@ export function formatDate(date: string | Date) {
 }
 
 export function generateId() {
-  return Math.random().toString(36).substring(2, 9);
+  return crypto.randomUUID();
 }
 
 export function getTenantBillingDetails(tenant: Tenant, property: Property) {
@@ -64,4 +64,14 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
     elecUnits,
     waterUnits
   };
+}
+
+export function formatMonthStr(ymStr: string) {
+  if (!ymStr) return '';
+  const parts = ymStr.split('-');
+  if (parts.length < 2) return ymStr;
+  const year = parts[0];
+  const monthIdx = parseInt(parts[1], 10) - 1;
+  const d = new Date(parseInt(year, 10), monthIdx, 1);
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 }

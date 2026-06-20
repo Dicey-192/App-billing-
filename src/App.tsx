@@ -3,16 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
-import { formatCurrency, generateId, cn, getTenantBillingDetails } from './lib/utils';
+import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import { AIAssistant } from './components/AIAssistant';
 import html2canvas from 'html2canvas';
+import { LoginScreen } from './components/LoginScreen';
+import { DashboardView } from './components/DashboardView';
+import { ExpensesView } from './components/ExpensesView';
+import { db, AuditDB } from './lib/db';
 
 const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
@@ -234,8 +238,16 @@ import { saveAs } from 'file-saver';
 import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal } from './components/Modals';
 
 export default function App() {
-  const [currentView, setView] = useState<ViewType>('tenants');
+  const [currentView, setView] = useState<ViewType>('dashboard');
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs } = useStorage();
+
+  // Authentication role states
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>({ email: 'me.ansari.aatif@gmail.com', role: 'owner' });
+  const [isRollingOver, setIsRollingOver] = useState(false);
+  const [hasBackup, setHasBackup] = useState(false);
+  const [showAlertsDropdown, setShowAlertsDropdown] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
 
   // Modals state
   const [profileModal, setProfileModal] = useState<{ open: boolean; tenant?: Tenant; property?: Property }>({ open: false });
@@ -251,39 +263,162 @@ export default function App() {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  // Undo/Redo Stacks
-  const [undoStack, setUndoStack] = useState<AppData[]>([]);
-  const [redoStack, setRedoStack] = useState<AppData[]>([]);
+  // Check Backup on mount
+  useEffect(() => {
+    db.get('ROLLOVER_BACKUP').then(b => setHasBackup(!!b));
+  }, []);
+
+  // State Diff Typings & State Mutators
+  interface StateDiff {
+    path: string;
+    oldVal: any;
+    newVal: any;
+    timestamp: number;
+  }
+
+  const [beforeSnapshot, setBeforeSnapshot] = useState<AppData | null>(null);
+  const [undoStack, setUndoStack] = useState<StateDiff[][]>([]);
+  const [redoStack, setRedoStack] = useState<StateDiff[][]>([]);
+
+  function setDeepValue(obj: any, path: string, val: any) {
+    const parts = path.split('.');
+    let current = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      let part = parts[i];
+      const arrayMatch = part.match(/^(\w+)\[([^\]]+)\]$/);
+      if (arrayMatch) {
+        const [, field, id] = arrayMatch;
+        const arr = current[field];
+        if (Array.isArray(arr)) {
+          const item = arr.find((x: any) => x.id === id);
+          if (item) current = item;
+          else return;
+        } else return;
+      } else {
+        if (!current[part]) current[part] = {};
+        current = current[part];
+      }
+    }
+    const lastPart = parts[parts.length - 1];
+    current[lastPart] = val;
+  }
+
+  function computeStateDiff(oldState: AppData, newState: AppData): StateDiff[] {
+    const diffs: StateDiff[] = [];
+    const timestamp = Date.now();
+    if (oldState.activeMonth !== newState.activeMonth) {
+      diffs.push({ path: 'activeMonth', oldVal: oldState.activeMonth, newVal: newState.activeMonth, timestamp });
+    }
+    const oldProps = oldState.properties || [];
+    const newProps = newState.properties || [];
+    newProps.forEach(np => {
+      const op = oldProps.find(p => p.id === np.id);
+      if (op) {
+        if (op.name !== np.name) diffs.push({ path: `properties[${np.id}].name`, oldVal: op.name, newVal: np.name, timestamp });
+        if (op.address !== np.address) diffs.push({ path: `properties[${np.id}].address`, oldVal: op.address, newVal: np.address, timestamp });
+        if (op.electricRate !== np.electricRate) diffs.push({ path: `properties[${np.id}].electricRate`, oldVal: op.electricRate, newVal: np.electricRate, timestamp });
+        if (op.waterRate !== np.waterRate) diffs.push({ path: `properties[${np.id}].waterRate`, oldVal: op.waterRate, newVal: np.waterRate, timestamp });
+      }
+    });
+    const oldTenants = oldState.tenants || [];
+    const newTenants = newState.tenants || [];
+    newTenants.forEach(nt => {
+      const ot = oldTenants.find(t => t.id === nt.id);
+      if (ot) {
+        if (ot.name !== nt.name) diffs.push({ path: `tenants[${nt.id}].name`, oldVal: ot.name, newVal: nt.name, timestamp });
+        if (ot.currElecReading !== nt.currElecReading) diffs.push({ path: `tenants[${nt.id}].currElecReading`, oldVal: ot.currElecReading, newVal: nt.currElecReading, timestamp });
+        if (ot.currWaterReading !== nt.currWaterReading) diffs.push({ path: `tenants[${nt.id}].currWaterReading`, oldVal: ot.currWaterReading, newVal: nt.currWaterReading, timestamp });
+        if (ot.prevElecReading !== nt.prevElecReading) diffs.push({ path: `tenants[${nt.id}].prevElecReading`, oldVal: ot.prevElecReading, newVal: nt.prevElecReading, timestamp });
+        if (ot.prevWaterReading !== nt.prevWaterReading) diffs.push({ path: `tenants[${nt.id}].prevWaterReading`, oldVal: ot.prevWaterReading, newVal: nt.prevWaterReading, timestamp });
+        if (ot.paidAmount !== nt.paidAmount) diffs.push({ path: `tenants[${nt.id}].paidAmount`, oldVal: ot.paidAmount, newVal: nt.paidAmount, timestamp });
+        if (ot.isPaid !== nt.isPaid) diffs.push({ path: `tenants[${nt.id}].isPaid`, oldVal: ot.isPaid, newVal: nt.isPaid, timestamp });
+        if (ot.previousDues !== nt.previousDues) diffs.push({ path: `tenants[${nt.id}].previousDues`, oldVal: ot.previousDues, newVal: nt.previousDues, timestamp });
+      }
+    });
+    if (oldState.tenants?.length !== newState.tenants?.length) {
+      diffs.push({ path: 'tenants', oldVal: oldState.tenants, newVal: newState.tenants, timestamp });
+    }
+    if (oldState.properties?.length !== newState.properties?.length) {
+      diffs.push({ path: 'properties', oldVal: oldState.properties, newVal: newState.properties, timestamp });
+    }
+    if (oldState.history?.length !== newState.history?.length) {
+      diffs.push({ path: 'history', oldVal: oldState.history, newVal: newState.history, timestamp });
+    }
+    return diffs;
+  }
+
+  function applyDiff(state: AppData, diff: StateDiff, reverse: boolean): AppData {
+    const next = structuredClone(state);
+    const valueToApply = reverse ? diff.oldVal : diff.newVal;
+    if (diff.path === 'tenants' || diff.path === 'properties' || diff.path === 'history' || diff.path === 'activeMonth') {
+      (next as any)[diff.path] = valueToApply;
+    } else {
+      setDeepValue(next, diff.path, valueToApply);
+    }
+    return next;
+  }
 
   const pushToUndo = () => {
-    setUndoStack(prev => [data, ...prev].slice(0, 50));
-    setRedoStack([]);
+    setBeforeSnapshot(structuredClone(data));
   };
+
+  useEffect(() => {
+    if (beforeSnapshot) {
+      const diffs = computeStateDiff(beforeSnapshot, data);
+      if (diffs.length > 0) {
+        setUndoStack(prev => [diffs, ...prev].slice(0, 30));
+        setRedoStack([]);
+      }
+      setBeforeSnapshot(null);
+    }
+  }, [data, beforeSnapshot]);
 
   const handleUndo = () => {
     if (undoStack.length === 0) return;
-    const [last, ...rest] = undoStack;
-    setRedoStack(prev => [data, ...prev]);
-    setData(last);
+    const [lastDiffs, ...rest] = undoStack;
+    
+    setData(prev => {
+      let current = structuredClone(prev);
+      for (const diff of lastDiffs) {
+        current = applyDiff(current, diff, true);
+      }
+      return current;
+    });
+
+    setRedoStack(prev => [lastDiffs, ...prev].slice(0, 30));
     setUndoStack(rest);
     showToast('Action undone');
   };
 
   const handleRedo = () => {
     if (redoStack.length === 0) return;
-    const [next, ...rest] = redoStack;
-    setUndoStack(prev => [data, ...prev]);
-    setData(next);
+    const [nextDiffs, ...rest] = redoStack;
+
+    setData(prev => {
+      let current = structuredClone(prev);
+      for (const diff of nextDiffs) {
+        current = applyDiff(current, diff, false);
+      }
+      return current;
+    });
+
+    setUndoStack(prev => [nextDiffs, ...prev].slice(0, 30));
     setRedoStack(rest);
     showToast('Action redone');
   };
 
-  // Keyboard Shortcuts
+  // Keyboard Command Palette and Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         if (e.shiftKey) handleRedo();
         else handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowPalette(prev => !prev);
+        setPaletteQuery('');
+      } else if (e.key === 'Escape') {
+        setShowPalette(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -296,11 +431,61 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // Smart Alerts state
+  const smartAlerts = useMemo(() => {
+    const alerts: { id: string; text: string; type: 'warning' | 'info' | 'success' }[] = [];
+    let allPaid = true;
+
+    tenants.forEach((t: any) => {
+      const prop = properties.find((p: any) => p.id === t.propertyId);
+      if (!prop) return;
+      const detail = getTenantBillingDetails(t, prop);
+      const outstanding = detail.totalDue - (t.paidAmount || 0);
+
+      if (!t.isPaid && outstanding > 0) {
+        allPaid = false;
+        alerts.push({
+          id: `overdue-${t.id}`,
+          text: `Overdue: ${t.name} — NPR ${outstanding.toLocaleString()}`,
+          type: 'warning'
+        });
+      }
+
+      if (t.currElecReading === t.prevElecReading) {
+        alerts.push({
+          id: `elec-${t.id}`,
+          text: `Missing electric reading: ${t.name} (Rm ${t.roomNumber})`,
+          type: 'info'
+        });
+      }
+      if (t.currWaterReading === t.prevWaterReading) {
+        alerts.push({
+          id: `water-${t.id}`,
+          text: `Missing water reading: ${t.name} (Rm ${t.roomNumber})`,
+          type: 'info'
+        });
+      }
+    });
+
+    if (tenants.length > 0 && allPaid) {
+      alerts.push({
+        id: 'all-clear',
+        text: 'All payments cleared this month.',
+        type: 'success'
+      });
+    }
+
+    return alerts;
+  }, [tenants, properties]);
+
   // Month detection effect
   useEffect(() => {
     if (properties.length === 0) return;
-
-    const currentMonth = new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    
+    // YYYY-MM format used for storage as string
+    const d = new Date();
+    const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    
     if (!data.activeMonth) {
       setActiveMonth(currentMonth);
     } else if (data.activeMonth !== currentMonth && data.dismissedMonth !== currentMonth) {
@@ -331,80 +516,147 @@ export default function App() {
   }, [properties, selectedPropertyId]);
 
   const handleRollover = (confirmedMonth?: string, carryForwardUtilities = true) => {
-    console.log('[DEBUG-ROLLOVER] Starting handleRollover with confirmedMonth:', confirmedMonth, 'carryForwardUtilities:', carryForwardUtilities);
-    const targetProperties = properties;
-    if (targetProperties.length === 0 || tenants.length === 0) {
-      console.warn('[DEBUG-ROLLOVER] Cannot roll over because properties or tenants is empty. targetProperties:', targetProperties.length, 'tenants:', tenants.length);
+    // Role check: Only Owner has permissions to perform rollover
+    if (currentUser && currentUser.role !== 'owner') {
+      showToast('Access Denied: Billing Rollover requires Owner permissions.');
       return;
     }
+
+    setIsRollingOver(true);
     
-    // Determine the billing period label
-    const month = confirmedMonth || new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-    console.log('[DEBUG-ROLLOVER] Chosen billing month label:', month);
-    
-    const historyEntries: any[] = [];
-    const tenantUpdates: { id: string, updates: Partial<Tenant> }[] = [];
-    const rolledOverTenants: Tenant[] = [];
-
-    targetProperties.forEach(prop => {
-      const propertyTenants = tenants.filter(t => t.propertyId === prop.id);
-      console.log('[DEBUG-ROLLOVER] Processing property:', prop.name, 'with tenant count:', propertyTenants.length);
-      if (propertyTenants.length === 0) return;
-
-      // Create history snapshot
-      const snapshotEntry = {
-        id: generateId(),
-        propertyId: prop.id,
-        month,
-        snapshot: {
-          property: { ...prop },
-          tenants: propertyTenants.map(t => ({ ...t })),
-        },
-        createdAt: Date.now(),
-      };
-      historyEntries.push(snapshotEntry);
-      console.log('[DEBUG-ROLLOVER] Added history entry snapshot id:', snapshotEntry.id, 'for month:', month);
-
-      propertyTenants.forEach(t => {
-        // FIXED (ROLLOVER CORRECTNESS LOGIC):
-        // 1. We execute the unified getTenantBillingDetails calculation utility (accounts for manual overrides properly)
-        //    instead of the previous copy-pasted formulas that ignored overrides and caused billing double-counting.
-        const billing = getTenantBillingDetails(t, prop);
+    setTimeout(async () => {
+      try {
+        console.log('[DEBUG-ROLLOVER] Starting thread-yielded handleRollover.');
         
-        // 2. We allow the resulting outstanding balance to be negative (representing credits for overpayment)
-        //    which carries forward to the next month to act as credit dues reducing next month's total due!
-        const remainingDues = billing.outstandingBalance;
-        console.log('[DEBUG-ROLLOVER] Tenant billing calculated:', t.name, 'outstandingBalance:', remainingDues);
+        // 0.5 — Save pre-rollover backup snapshot
+        await db.set('ROLLOVER_BACKUP', data);
+        setHasBackup(true);
 
-        const updates = {
-          prevElecReading: t.currElecReading, // current month's reading becomes starting for next month
-          currElecReading: carryForwardUtilities ? t.currElecReading : 0, // carry forward or reset to 0
-          prevWaterReading: t.currWaterReading,
-          currWaterReading: carryForwardUtilities ? t.currWaterReading : 0, // carry forward or reset to 0
-          isPaid: remainingDues <= 0,
-          paidAmount: 0,
-          payments: [],
-          previousDues: remainingDues, // Negative dues register as a credit balance forward!
-          manualOverrides: undefined,  // CRITICAL FIX: We must clear the manual overrides so previous month's overrides don't carry over and corrupt the upcoming billing!
-          updatedAt: Date.now(),
-        };
+        const targetProperties = properties;
+        if (targetProperties.length === 0 || tenants.length === 0) {
+          console.warn('[DEBUG-ROLLOVER] Cannot roll over; holdings empty.');
+          setIsRollingOver(false);
+          return;
+        }
 
-        tenantUpdates.push({ id: t.id, updates: updates as Partial<Tenant> });
-        rolledOverTenants.push({ ...t, ...updates });
-      });
-    });
+        // Determine correct month (storing strictly as locale-independent YYYY-MM)
+        let month = confirmedMonth;
+        if (!month) {
+          const d = new Date();
+          month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+        
+        let historyEntries: any[] = [];
+        let tenantUpdates: { id: string; updates: Partial<Tenant> }[] = [];
+        let rolledOverTenants: Tenant[] = [];
 
-    console.log('[DEBUG-ROLLOVER] Completed tenant and property iterations.');
-    if (historyEntries.length > 0 || tenantUpdates.length > 0) {
-      console.log('[DEBUG-ROLLOVER] Triggering rollover() action with historyEntries:', historyEntries.length, 'tenantUpdates:', tenantUpdates.length);
-      rollover(month, historyEntries, tenantUpdates);
-    } else {
-      console.warn('[DEBUG-ROLLOVER] No history entries or tenant updates to perform.');
-    }
+        let propIdx = 0;
+        let propIterations = 0;
+        const maxIterations = 500;
 
-    console.log('[DEBUG-ROLLOVER] Setting batchModal open: true with rolledOverTenants count:', rolledOverTenants.length);
-    setBatchModal({ open: true, tenants: rolledOverTenants });
-    console.log('[DEBUG-ROLLOVER] handleRollover completed successfully.');
+        while (propIdx < targetProperties.length) {
+          propIterations++;
+          if (propIterations > maxIterations) {
+            console.error('[ROLLOVER] Safe guard limit triggered on properties loop.');
+            break;
+          }
+
+          const prop = targetProperties[propIdx];
+          propIdx++;
+
+          const propertyTenants = tenants.filter(t => t.propertyId === prop.id);
+          if (propertyTenants.length === 0) continue;
+
+          // Snapshot entry
+          const snapshotEntry = {
+            id: crypto.randomUUID(),
+            propertyId: prop.id,
+            month,
+            snapshot: {
+              property: { id: prop.id, name: prop.name, address: prop.address, electricRate: prop.electricRate, waterRate: prop.waterRate, defaultExpenses: prop.defaultExpenses },
+              tenants: propertyTenants.map(t => ({
+                id: t.id,
+                name: t.name,
+                roomNumber: t.roomNumber,
+                rent: t.rent,
+                previousDues: t.previousDues,
+                prevElecReading: t.prevElecReading,
+                currElecReading: t.currElecReading,
+                prevWaterReading: t.prevWaterReading,
+                currWaterReading: t.currWaterReading,
+                isPaid: t.isPaid,
+                paidAmount: t.paidAmount || 0,
+                expenses: t.expenses,
+                manualOverrides: t.manualOverrides ? { ...t.manualOverrides } : undefined
+              })),
+            },
+            createdAt: Date.now(),
+          };
+          historyEntries.push(snapshotEntry);
+
+          let tenantIdx = 0;
+          let tenantIterations = 0;
+          while (tenantIdx < propertyTenants.length) {
+            tenantIterations++;
+            if (tenantIterations > maxIterations) {
+              console.error('[ROLLOVER] Safe guard limit triggered on tenants loop.');
+              break;
+            }
+
+            const t = propertyTenants[tenantIdx];
+            tenantIdx++;
+
+            const billing = getTenantBillingDetails(t, prop);
+            
+            // balanceForward = outstandingBalance (net dues remaining of previous outstanding + current charges - paidAmount)
+            const balanceForward = billing.outstandingBalance;
+
+            const updates = {
+              prevElecReading: t.currElecReading,
+              currElecReading: carryForwardUtilities ? t.currElecReading : 0,
+              prevWaterReading: t.currWaterReading,
+              currWaterReading: carryForwardUtilities ? t.currWaterReading : 0,
+              isPaid: balanceForward <= 0,
+              paidAmount: 0,
+              payments: [],
+              previousDues: balanceForward, // Negative represents landlord credit carry over!
+              manualOverrides: undefined,   // Clear overrides to prevent downstream corruption
+              updatedAt: Date.now(),
+            };
+
+            tenantUpdates.push({ id: t.id, updates });
+            rolledOverTenants.push({ ...t, ...updates });
+          }
+        }
+
+        if (historyEntries.length > 0 || tenantUpdates.length > 0) {
+          rollover(month, historyEntries, tenantUpdates);
+          
+          // Secure system audit logging
+          await AuditDB.addAuditEntry(
+            'ROLLOVER',
+            currentUser ? currentUser.email : 'System',
+            `Ran billing cycle rollover for period ${month}. Snapshots recorded: ${historyEntries.length}. Total tenant updates: ${tenantUpdates.length}`,
+            null,
+            null
+          );
+        }
+
+        setBatchModal({ open: true, tenants: rolledOverTenants });
+        showToast('Billing rollover completed successfully!');
+
+        // 0.5 — Null temp variables for garbage collection / memory safety
+        historyEntries = null;
+        tenantUpdates = null;
+        rolledOverTenants = null;
+
+      } catch (err) {
+        console.error('[ROLLOVER_ERROR]', err);
+        showToast('Rollover failed due to data error.');
+      } finally {
+        setIsRollingOver(false);
+      }
+    }, 10);
   };
 
   const handleBatchSave = (updates: { id: string, currElec: number, currWater: number }[]) => {
@@ -529,6 +781,10 @@ export default function App() {
   };
 
   const handleDeleteProperty = (id: string) => {
+    if (currentUser?.role !== 'owner') {
+      showToast('Access Denied: Owner permissions required to delete properties.');
+      return;
+    }
     if (confirm('Are you sure you want to delete this property? All associated tenants will also be removed.')) {
       pushToUndo();
       deleteProperty(id);
@@ -537,6 +793,10 @@ export default function App() {
   };
 
   const handleDeleteTenant = (id: string) => {
+    if (currentUser?.role !== 'owner') {
+      showToast('Access Denied: Owner permissions required to delete tenants.');
+      return;
+    }
     if (confirm('Remove this tenant from the records?')) {
       pushToUndo();
       deleteTenant(id);
@@ -566,6 +826,68 @@ export default function App() {
     link.click();
   };
 
+  // Keyboard shortcut search filter logic
+  const searchPaletteItems = () => {
+    if (!paletteQuery) return [];
+    
+    const results: { text: string; category: string; action: () => void }[] = [];
+    
+    // Filter properties
+    properties.forEach(p => {
+      if (p.name.toLowerCase().includes(paletteQuery.toLowerCase())) {
+        results.push({
+          text: `Property: ${p.name} (${p.address})`,
+          category: 'Properties',
+          action: () => {
+            setSelectedPropertyId(p.id);
+            setView('tenants');
+            setShowPalette(false);
+          }
+        });
+      }
+    });
+
+    // Filter tenants
+    tenants.forEach(t => {
+      if (t.name.toLowerCase().includes(paletteQuery.toLowerCase())) {
+        results.push({
+          text: `Tenant: ${t.name} (Rm ${t.roomNumber})`,
+          category: 'Tenants',
+          action: () => {
+            setSelectedPropertyId(t.propertyId);
+            setView('tenants');
+            setShowPalette(false);
+          }
+        });
+      }
+    });
+
+    // Navigation sections
+    const sections = [
+      { text: 'Analytics Dashboard', view: 'dashboard' },
+      { text: 'Tenants Ledger Ledger', view: 'tenants' },
+      { text: 'Corporate Expenses Ledger', view: 'expenses' },
+      { text: 'Administrative Hub / Settings', view: 'admin' }
+    ];
+
+    sections.forEach(s => {
+      if (s.text.toLowerCase().includes(paletteQuery.toLowerCase())) {
+        results.push({
+          text: `Go to ${s.text}`,
+          category: 'Navigation',
+          action: () => {
+            setView(s.view as any);
+            setShowPalette(false);
+          }
+        });
+      }
+    });
+
+    return results.slice(0, 8);
+  };
+
+  const paletteResults = searchPaletteItems();
+
   return (
     <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none">
       {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
@@ -573,6 +895,86 @@ export default function App() {
         <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
         <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-[#76FF03]/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
       </div>
+
+      {/* 3.5 — Command Palette Overlay Modal */}
+      <AnimatePresence>
+        {showPalette && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/80 backdrop-blur-md pt-[10vh] px-4 cursor-pointer"
+            onClick={() => setShowPalette(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: -10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: -10 }}
+              className="w-full max-w-xl bg-[#121316] border border-white/10 rounded-[24px] p-4 shadow-2xl relative cursor-default"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Ctrl+K Search tenants, properties, or sections..."
+                  value={paletteQuery}
+                  onChange={e => setPaletteQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/5 text-slate-100 rounded-xl px-4 py-2.5 pl-11 text-xs focus:border-[#76FF03]/30 focus:outline-none font-sans font-medium"
+                />
+              </div>
+
+              {paletteQuery && (
+                <div className="mt-4 space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {paletteResults.length === 0 ? (
+                    <p className="text-[11px] text-slate-500 italic text-center py-4">No matching records found.</p>
+                  ) : (
+                    paletteResults.map((item, idx) => (
+                      <button
+                        key={idx}
+                        onClick={item.action}
+                        className="w-full p-2.5 rounded-xl border border-white/5 hover:border-[#76FF03]/30 flex items-center justify-between text-left hover:bg-white/[0.02] cursor-pointer transition-all"
+                      >
+                        <span className="text-[11px] font-bold text-slate-200">{item.text}</span>
+                        <span className="text-[9px] font-mono font-bold uppercase text-[#76FF03] bg-[#76FF03]/10 px-2 py-0.5 rounded-full border border-[#76FF03]/20">{item.category}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between border-t border-white/5 pt-3 mt-3 text-[9px] font-mono text-slate-500">
+                <span>Type to filter...</span>
+                <span>ESC to close</span>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 0.2 — Glass-morphism Rollover Thread-yield active state */}
+      <AnimatePresence>
+        {isRollingOver && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md text-white border border-white/5"
+          >
+            <div className="relative flex flex-col items-center space-y-6 max-w-sm text-center px-6">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full border-4 border-t-transparent border-[#76FF03] animate-spin shadow-lg shadow-[#76FF03]/20" />
+                <span className="absolute inset-x-0 bottom-0 text-[8px] font-black tracking-widest text-[#76FF03] uppercase font-mono text-center">NEX</span>
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-black tracking-tight font-sans uppercase">Rolling Over Cycle</h3>
+                <p className="text-xs text-slate-400 font-mono leading-relaxed">Rolling over billing cycle. Please wait.</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Sidebar currentView={currentView} setView={setView} />
       
@@ -583,7 +985,7 @@ export default function App() {
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">ARTHA ADMINISTRATIVE COMMAND</p>
               <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider mt-1.5 flex items-center gap-3 font-sans">
-                {currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
+                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'expenses' ? 'Expense Log' : currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
                 <span className="w-1.5 h-1.5 rounded-full bg-[#76FF03] shadow-[0_0_8px_#76FF03]" />
               </h1>
             </div>
@@ -629,6 +1031,67 @@ export default function App() {
                  <Redo2 className="w-4 h-4" />
                </button>
              </div>
+
+             {/* 3.3 — Smart Diagnostic Notification Alerts Bell Popover */}
+             <div className="relative shrink-0">
+               <button 
+                 onClick={() => setShowAlertsDropdown(prev => !prev)}
+                 className="relative p-2.5 bg-white/[0.02] hover:bg-white/[0.06] border border-white/5 rounded-xl text-slate-400 hover:text-[#76FF03] transition-all cursor-pointer"
+                 title="Smart Diagnostic Alerts"
+               >
+                 <Bell className="w-4 h-4" />
+                 {smartAlerts.length > 0 && (
+                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-slate-950 rounded-full text-[9px] font-black flex items-center justify-center animate-pulse">
+                     {smartAlerts.length}
+                   </span>
+                 )}
+               </button>
+               
+               <AnimatePresence>
+                 {showAlertsDropdown && (
+                   <>
+                     <div className="fixed inset-0 z-40" onClick={() => setShowAlertsDropdown(false)} />
+                     <motion.div 
+                       initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                       animate={{ opacity: 1, scale: 1, y: 0 }}
+                       exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                       className="absolute right-0 mt-3 w-80 bg-[#121316] border border-white/10 rounded-2xl shadow-2xl p-4 space-y-3 z-50 cursor-default"
+                     >
+                       <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Smart Alerts</span>
+                         <span className="text-[9px] font-mono text-[#76FF03]">{smartAlerts.length} active</span>
+                       </div>
+                       <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                         {smartAlerts.length === 0 ? (
+                           <p className="text-[11px] text-slate-500 italic text-center py-2">No active warnings. Code compliant.</p>
+                         ) : (
+                           smartAlerts.map(alert => (
+                             <div key={alert.id} className="p-2.5 rounded-xl border border-white/5 flex items-start gap-2 bg-slate-950/40 text-left">
+                               {alert.type === 'warning' ? (
+                                 <ShieldAlert className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                               ) : (
+                                 <AlertCircle className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />
+                               )}
+                               <span className="text-[10px] text-slate-300 font-medium leading-relaxed">{alert.text}</span>
+                             </div>
+                           ))
+                         )}
+                       </div>
+                     </motion.div>
+                   </>
+                 )}
+               </AnimatePresence>
+             </div>
+
+             {/* User profile with admin display chip */}
+             {currentUser && (
+               <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
+                 <div className="flex flex-col text-right">
+                   <span className="text-[10px] font-bold text-white leading-none truncate max-w-[110px]">{currentUser.email.split('@')[0]}</span>
+                   <span className="text-[8px] font-mono uppercase text-[#76FF03] tracking-widest mt-0.5">{currentUser.role}</span>
+                 </div>
+               </div>
+             )}
 
              {/* Action triggers dynamically depending on active context */}
              {currentView === 'tenants' && (
@@ -692,6 +1155,24 @@ export default function App() {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
             className="flex-1"
           >
+            {currentView === 'dashboard' && (
+              <DashboardView
+                properties={properties}
+                tenants={tenants}
+                history={history}
+                formatCurrency={formatCurrency}
+                setView={setView}
+                activeMonth={data.activeMonth || ''}
+              />
+            )}
+            {currentView === 'expenses' && (
+              <ExpensesView
+                properties={properties}
+                formatCurrency={formatCurrency}
+                showToast={showToast}
+                currentUser={currentUser}
+              />
+            )}
             {currentView === 'tenants' && (
               <TenantsView 
                 tenants={filteredTenants}
@@ -943,7 +1424,7 @@ export default function App() {
   );
 }
 
-function DashboardView({ data, setBatchModal, setBulkTableModal, properties }: { data: AppData; setBatchModal: any; setBulkTableModal: any; properties: Property[] }) {
+function LegacyDashboardPlaceholder({ data, setBatchModal, setBulkTableModal, properties }: { data: AppData; setBatchModal: any; setBulkTableModal: any; properties: Property[] }) {
   const stats = useMemo(() => {
     let totalPotential = 0;
     let totalCollected = 0;
@@ -1717,131 +2198,172 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
               Roll Over Month
             </button>
           </div>
-
         </div>
 
-        {/* COLUMN 2: CONTRAST-LIGHT BLOCK (displaying the Unpaid/Paid list of tenants) */}
+        {/* COLUMN 2: DIGITALLY POLISHED TENANT CARD GRID BLOCK (Replacing simple list/table) */}
         <div className="lg:col-span-4 space-y-4">
           <div className="neo-contrast-light-block p-6 flex flex-col min-h-[550px] relative">
             
-            {/* Header capsule control band inside Left Block */}
+            {/* Header capsule control band */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-stone-200">
               <div>
-                <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest block">PORTFOLIO REGISTRY</span>
+                <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest block font-mono">PORTFOLIO REGISTRY</span>
                 <h3 className="text-lg font-bold text-stone-900 tracking-tight font-serif flex items-center gap-2">
-                  Bill Ledger List
-                  <span className="px-2 py-0.5 bg-stone-100 text-stone-600 rounded-full font-mono font-bold text-[9px]">{tenants.length}</span>
+                  Bill Ledger Cards
+                  <span className="px-2.5 py-0.5 bg-stone-100 text-stone-700 rounded-full font-mono font-black text-[9px]">{tenants.length}</span>
                 </h3>
               </div>
               <div className="flex gap-1.5">
                 <button 
                   onClick={toggleAll}
-                  className="px-2.5 py-1 text-[8px] font-mono tracking-widest uppercase font-black bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-md border border-stone-200 transition-colors cursor-pointer"
+                  className="px-2.5 py-1 text-[8px] font-mono tracking-widest uppercase font-black bg-stone-50 hover:bg-stone-150 text-stone-700 rounded-md border border-stone-200 transition-colors cursor-pointer"
                 >
-                  {selectedTenantIds.size === tenants.length ? "Deselect All" : "Select All"}
+                  {selectedTenantIds.size === tenants.length ? "Clear All" : "Select All"}
                 </button>
               </div>
             </div>
 
-            {/* List with stacked high-contrast list items */}
-            <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] pr-1.5 custom-scrollbar">
+            {/* Grid of cards replacing the current list/table */}
+            <div className="space-y-4 flex-1 overflow-y-auto max-h-[480px] pr-1.5 custom-scrollbar">
               {tenants.map((t: any) => {
                 const prop = properties.find((p: any) => p.id === t.propertyId)!;
+                if (!prop) return null;
+                
                 const detail = getTenantBillingDetails(t, prop);
                 const isSelected = selectedTenantIds.has(t.id);
                 const isFocused = activeTenant?.id === t.id;
+
+                const outstanding = detail.totalDue - (t.paidAmount || 0);
+
+                // Status Badge Logic: Paid | Partial | Overdue
+                let status = "Overdue";
+                let statusClass = "bg-rose-500/10 text-rose-600 border border-rose-500/10";
+                if (t.isPaid || outstanding <= 0) {
+                  status = "Paid";
+                  statusClass = "bg-emerald-500/10 text-emerald-600 border border-[#76FF03]/20";
+                } else if (t.paidAmount > 0) {
+                  status = "Partial";
+                  statusClass = "bg-amber-500/10 text-amber-600 border border-amber-500/15";
+                }
+
+                const dueColor = outstanding <= 0 ? "text-emerald-500" : "text-rose-600";
+                const initials = t.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
 
                 return (
                   <div 
                     key={t.id} 
                     onClick={() => setFocusedTenantId(t.id)}
                     className={cn(
-                      "p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between group",
+                      "p-4 rounded-3xl border transition-all duration-200 flex flex-col justify-between gap-4 cursor-pointer relative overflow-hidden text-left",
                       isFocused 
-                        ? "bg-[#1A1B20] border-[#76FF03]/40 shadow-xl scale-[1.01] text-white" 
-                        : "bg-white border-stone-150 hover:bg-stone-50 text-black"
+                        ? "bg-[#121316] border-[#76FF03]/50 shadow-xl" 
+                        : "bg-white border-stone-200 hover:border-stone-400 hover:shadow-md"
                     )}
                   >
-                    <div className="flex items-center gap-3">
-                      {/* Checkbox trigger using global neon style when focused or active */}
-                      <button 
-                        onClick={(e) => toggleSelection(t.id, e)}
-                        className={cn(
-                          "w-4.5 h-4.5 rounded-md flex items-center justify-center transition-colors border",
-                          isSelected 
-                            ? "bg-[#76FF03] border-[#76FF03] text-[#121316]" 
-                            : isFocused 
-                              ? "border-slate-600 hover:border-[#76FF03]"
-                              : "border-stone-300 hover:border-black"
-                        )}
-                      >
-                        {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
-                      </button>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {/* selection checkbox */}
+                        <button 
+                          onClick={(e) => toggleSelection(t.id, e)}
+                          className={cn(
+                            "w-5 h-5 rounded-md flex items-center justify-center transition-colors border shrink-0",
+                            isSelected 
+                              ? "bg-[#76FF03] border-[#76FF03] text-[#121316]" 
+                              : isFocused 
+                                ? "border-slate-600 hover:border-[#76FF03]"
+                                : "border-stone-300 hover:border-stone-500"
+                          )}
+                        >
+                          {isSelected && <Check className="w-3.5 h-3.5" />}
+                        </button>
 
-                      {/* Head initials Avatar representation */}
-                      <div className={cn(
-                        "w-9 h-9 rounded-full font-bold font-mono text-[11px] flex items-center justify-center border",
-                        isFocused 
-                          ? "bg-stone-800 text-[#76FF03] border-slate-700" 
-                          : "bg-stone-100 text-black border-stone-300"
-                      )}>
-                        {t.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase()}
-                      </div>
-
-                      <div className="space-y-0.5">
+                        {/* Circular Avatar */}
                         <div className={cn(
-                          "font-bold leading-tight flex items-center gap-1.5",
-                          isFocused ? "text-white" : "text-[#000000]"
+                          "w-11 h-11 rounded-full font-bold font-sans text-xs flex items-center justify-center border shrink-0 uppercase shadow-sm",
+                          isFocused 
+                            ? "bg-slate-800 text-[#76FF03] border-slate-700" 
+                            : "bg-stone-100 text-stone-850 border-stone-200"
                         )}>
-                          {t.name}
+                          {initials}
                         </div>
-                        
-                        <div className="flex items-center gap-2">
-                          <span className={cn(
+
+                        <div className="space-y-0.5">
+                          <h4 className={cn(
+                            "font-bold text-sm tracking-tight font-sans",
+                            isFocused ? "text-white" : "text-slate-900"
+                          )}>
+                            {t.name}
+                          </h4>
+                          <p className={cn(
                             "text-[10px] font-medium",
                             isFocused ? "text-slate-400" : "text-stone-500"
                           )}>
-                            Rm {t.roomNumber}
-                          </span>
-                          
-                          {/* Fine text ID labels paired with secondary status badges */}
-                          <span className={cn(
-                            "text-[9px] font-mono uppercase tracking-wider font-semibold",
-                            isFocused ? "text-[#76FF03]/90" : "text-stone-600"
-                          )}>
-                            #427-{t.roomNumber}
-                          </span>
-
-                          <span className={cn(
-                            "px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight font-mono",
-                            isFocused 
-                              ? "bg-stone-800 text-slate-300" 
-                              : "bg-stone-100 text-stone-500"
-                          )}>
-                            {t.isPaid ? 'Sent' : 'Unsent'}
-                          </span>
+                            {prop ? prop.name : 'Unknown'} • Rm {t.roomNumber}
+                          </p>
                         </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1 shrink-0 text-right">
+                        <span className={cn("px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider", statusClass)}>
+                          {status}
+                        </span>
+                        <span className={cn("font-mono font-black text-xs tracking-tight", isFocused ? dueColor : outstanding <= 0 ? "text-emerald-600" : "text-rose-600")}>
+                          {formatCurrency(outstanding)}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="text-right flex flex-col items-end gap-1">
-                      <div className={cn(
-                        "font-mono font-bold text-sm tracking-tight",
-                        isFocused ? "text-[#76FF03]" : "text-[#000000]"
-                      )}>
-                        {formatCurrency(detail.totalDue)}
-                      </div>
-                      
-                      <span className={cn(
-                        "px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest",
-                        t.isPaid 
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : isFocused 
-                            ? "bg-[#76FF03]/10 text-[#76FF03] border border-[#76FF03]/20" 
-                            : "bg-amber-100 text-amber-800"
-                      )}>
-                        {t.isPaid ? 'Paid' : 'Unpaid'}
-                      </span>
+                    {/* Quick Buttons Grid for Tactile Operations in Center block */}
+                    <div className="grid grid-cols-3 gap-2 border-t border-dashed pt-3 border-stone-200/50">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedTenantId(t.id);
+                          downloadReceipt(t);
+                        }}
+                        className={cn(
+                          "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
+                          isFocused 
+                            ? "bg-slate-900 text-[#76FF03] border-slate-800 hover:bg-slate-800" 
+                            : "bg-stone-50 text-stone-700 border-stone-200 hover:bg-[#121316] hover:text-white"
+                        )}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Receipt
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedTenantId(t.id);
+                          setPaymentModal({ open: true, tenant: t });
+                        }}
+                        className={cn(
+                          "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
+                          isFocused 
+                            ? "bg-[#76FF03] text-slate-950 border-[#76FF03] hover:bg-opacity-95" 
+                            : "bg-emerald-50 text-white border-emerald-500 hover:bg-emerald-600"
+                        )}
+                      >
+                        <CreditCard className="w-3.5 h-3.5" />
+                        Pay
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          shareViaWhatsApp(t);
+                        }}
+                        className={cn(
+                          "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
+                          isFocused 
+                            ? "bg-slate-900 text-[#76FF03] border-slate-800 hover:bg-slate-800" 
+                            : "bg-stone-50 text-stone-700 border-stone-200 hover:bg-[#121316] hover:text-white"
+                        )}
+                      >
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                        Alert
+                      </button>
                     </div>
                   </div>
                 );
@@ -1855,14 +2377,16 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
               )}
             </div>
 
-            {/* Bottom Actions for Left Block */}
+            {/* Bottom Outstanding Dues Display */}
             <div className="pt-4 border-t border-stone-200 mt-4 flex items-center justify-between text-stone-500">
               <span className="text-[9px] font-mono font-bold block">TOTAL OUTSTANDING DEPOSIT</span>
               <span className="text-sm font-bold font-serif text-stone-900">
                 {formatCurrency(tenants.reduce((acc: number, t: any) => {
                    const prop = properties.find((p: any) => p.id === t.propertyId)!;
+                   if (!prop) return acc;
                    const detail = getTenantBillingDetails(t, prop);
-                   return acc + (t.isPaid ? 0 : detail.totalDue);
+                   const outstanding = detail.totalDue - (t.paidAmount || 0);
+                   return acc + (outstanding > 0 ? outstanding : 0);
                 }, 0))}
               </span>
             </div>
@@ -2137,6 +2661,13 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
 
 function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs }: any) {
   const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics'>('backups');
+  const [hasSystemBackup, setHasSystemBackup] = React.useState(false);
+
+  React.useEffect(() => {
+    db.get('ROLLOVER_BACKUP').then(val => {
+      if (val) setHasSystemBackup(true);
+    });
+  }, []);
 
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2214,7 +2745,24 @@ function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStat
                   </h3>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-1">Download and restore full JSON database records</p>
                 </div>
-                <div className="flex gap-2 self-start sm:self-center">
+                <div className="flex flex-wrap gap-2 self-start sm:self-center">
+                  {hasSystemBackup && (
+                    <button 
+                      onClick={async () => {
+                        const backup = await db.get('ROLLOVER_BACKUP');
+                        if (backup && confirm('Are you sure you want to restore the pre-rollover backup? This will revert the entire billing cycle.')) {
+                          restoreData(backup);
+                          alert('System restored to pre-rollover state successfully!');
+                          setHasSystemBackup(false);
+                        }
+                      }}
+                      className="px-3.5 py-2 bg-amber-500/15 hover:bg-amber-500/25 rounded-xl text-[10px] font-extrabold text-amber-400 border border-amber-500/30 uppercase tracking-widest flex items-center gap-2 transition-all cursor-pointer"
+                      title="Restore data from last rollover backup"
+                    >
+                      <History className="w-3 h-3 animate-spin duration-3000" />
+                      Restore Rollover Backup
+                    </button>
+                  )}
                   <button onClick={exportData} className="px-3.5 py-2 bg-[#76FF03]/5 hover:bg-[#76FF03]/10 rounded-xl text-[10px] font-bold text-[#76FF03] border border-[#76FF03]/10 uppercase tracking-widest flex items-center gap-2 transition-all cursor-pointer">
                       <Download className="w-3 h-3" />
                       Backup JSON

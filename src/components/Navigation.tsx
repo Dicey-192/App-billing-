@@ -1,29 +1,32 @@
 import React from 'react';
-import { Users, LayoutDashboard, Settings } from 'lucide-react';
+import { Users, LayoutDashboard, Settings, CreditCard } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
-export type ViewType = 'tenants' | 'admin';
+export type ViewType = 'dashboard' | 'tenants' | 'expenses' | 'admin';
 
 interface SidebarProps {
   currentView: ViewType;
   setView: (view: ViewType) => void;
+  hasOverdueAlert?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, hasOverdueAlert }) => {
   const items = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'tenants', label: 'Tenants Ledger', icon: Users },
+    { id: 'expenses', label: 'Expenses Manager', icon: CreditCard },
     { id: 'admin', label: 'Administrative Hub', icon: Settings },
   ];
 
   return (
     <>
       {/* Desktop Navigation Hover/Floating Dock Pane - Vertical Left/Top Side */}
-      <aside className="hidden md:flex flex-col items-center py-8 px-4 w-24 border-r border-white/5 backdrop-blur-xl bg-[#121316]/90 h-screen sticky top-0 shrink-0 z-30 select-none justify-between">
+      <aside className="hidden md:flex flex-col items-center py-8 px-4 w-24 border-r border-white/5 backdrop-blur-xl bg-[#121316]/90 h-screen sticky top-0 shrink-0 z-30 select-none justify-between animate-fade-in">
         <div className="flex flex-col items-center gap-8 w-full">
           {/* Platform Emblem */}
           <div className="w-12 h-12 bg-[#76FF03] rounded-2xl flex items-center justify-center text-[#121316] font-sans font-black text-xl shadow-lg shadow-[#76FF03]/20 border border-[#76FF03]/30">
-            A
+            N
           </div>
           
           {/* Vertical Selection Dock Area */}
@@ -47,6 +50,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
                     <span className="absolute -left-1.5 w-1 h-4 bg-[#76FF03] rounded-r-md" />
                   )}
                   
+                  {item.id === 'tenants' && hasOverdueAlert && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-amber-500 rounded-full border-2 border-[#121316] animate-pulse" />
+                  )}
+                  
                   {/* Floating tooltip popover */}
                   <span className="absolute left-16 px-2.5 py-1.5 rounded-lg bg-[#1D1E22] text-white border border-white/10 text-[10px] font-bold uppercase tracking-wider scale-0 group-hover:scale-100 origin-left transition-transform duration-200 shadow-xl whitespace-nowrap z-55">
                     {item.label}
@@ -60,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
         {/* Lower dock diagnostic telemetry indicator */}
         <div className="flex flex-col items-center gap-4">
           <span className="w-2.5 h-2.5 rounded-full bg-[#76FF03] animate-pulse shadow-[0_0_8px_rgba(118,255,3,0.6)]" />
-          <span className="text-[9px] font-mono tracking-widest text-[#8A8D98] font-bold select-none uppercase">LIVE</span>
+          <span className="text-[9px] font-mono tracking-widest text-[#8A8D98] font-bold select-none uppercase">NEXUM</span>
         </div>
       </aside>
 
@@ -71,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
           return (
             <button
               key={item.id}
-              onClick={() => setView(item.id as ViewType)}
+               onClick={() => setView(item.id as ViewType)}
               className={cn(
                 "flex flex-col items-center gap-1 py-1 px-4 rounded-xl transition-all duration-300 relative select-none cursor-pointer",
                 active 
@@ -86,7 +93,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
                 />
               )}
               <item.icon className="w-5 h-5 transition-transform duration-300 active:scale-95" />
-              <span className="text-[9px] font-black uppercase tracking-wider font-sans">{item.id === 'tenants' ? 'Tenants' : 'Admin Hub'}</span>
+              <span className="text-[9px] font-black uppercase tracking-wider font-sans">
+                {item.id === 'dashboard' ? 'Dash' : item.id === 'tenants' ? 'Tenants' : item.id === 'expenses' ? 'Expenses' : 'Admin'}
+              </span>
             </button>
           );
         })}

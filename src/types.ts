@@ -80,6 +80,13 @@ export interface BillHistoryEntry {
   createdAt: number;
 }
 
+export interface SubscriptionPlan {
+  name: 'Free' | 'Pro';
+  maxProperties: number;
+  maxTenants: number;
+  aiAssistant: boolean;
+}
+
 export interface AppData {
   properties: Property[];
   tenants: Tenant[];
@@ -89,5 +96,6 @@ export interface AppData {
   lastBackupAt?: number;
   auditLogs?: AuditLogEntry[];
   supportMasterOverrideMode?: boolean;
+  subscriptionPlan?: SubscriptionPlan;
 }
 
