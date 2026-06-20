@@ -11,7 +11,10 @@ export class BackendDB {
   }
 
   private init() {
-    // Load existing keys from localStorage to memory Map to prevent loss
+    // 1. Load primary from localStorage
+    let newestPrimaryTimestamp = 0;
+    const primaryDataMap = new Map<string, string>();
+    
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
@@ -19,12 +22,71 @@ export class BackendDB {
           const val = localStorage.getItem(key);
           if (val) {
             const mapKey = key.slice(this.storageKeyPrefix.length);
-            this.#data.set(mapKey, val);
+            primaryDataMap.set(mapKey, val);
+            
+            // Try extracting target timestamp to compare
+            try {
+              let decodedJson: string;
+              try {
+                decodedJson = decodeURIComponent(escape(atob(val)));
+              } catch {
+                decodedJson = atob(val);
+              }
+              const parsed = JSON.parse(decodedJson);
+              if (parsed && typeof parsed === 'object' && '_timestamp' in parsed) {
+                if (parsed._timestamp > newestPrimaryTimestamp) {
+                  newestPrimaryTimestamp = parsed._timestamp;
+                }
+              }
+            } catch {
+              // Ignore parse error
+            }
           }
         }
       }
     } catch (e) {
-      console.error('Failed to load storage into BackendDB', e);
+      console.error('Failed to load primary storage into BackendDB', e);
+    }
+
+    // Always load primary keys first to ensure we have standard stored keys
+    for (const [key, val] of primaryDataMap.entries()) {
+      this.#data.set(key, val);
+    }
+
+    // 2. Read Emergency Backup
+    let newestEmergencyTimestamp = 0;
+    let emergencyData: Record<string, string> = {};
+    try {
+      const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
+      if (backupStr) {
+        const envelope = JSON.parse(backupStr);
+        if (envelope && typeof envelope === 'object' && '_timestamp' in envelope) {
+          newestEmergencyTimestamp = envelope._timestamp;
+          if (envelope.data && typeof envelope.data === 'object') {
+            emergencyData = envelope.data;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to read EMERGENCY_BACKUP', e);
+    }
+
+    // 3. Restore from EMERGENCY_BACKUP if it is strictly newer
+    if (newestEmergencyTimestamp > newestPrimaryTimestamp && Object.keys(emergencyData).length > 0) {
+      console.log(`[BackendDB] EMERGENCY_BACKUP is newer (${newestEmergencyTimestamp} > ${newestPrimaryTimestamp}). Restoring/Merging...`);
+      for (const [key, val] of Object.entries(emergencyData)) {
+        this.#data.set(key, val);
+        try {
+          localStorage.setItem(this.storageKeyPrefix + key, val);
+        } catch (e) {
+          console.error(`[BackendDB] Sync key ${key} to primary failed during init restoration`, e);
+        }
+      }
+    } else {
+      console.log(`[BackendDB] Primary storage is newer or equal (${newestPrimaryTimestamp} >= ${newestEmergencyTimestamp}). Using primary.`);
+      if (primaryDataMap.size > 0 && newestEmergencyTimestamp === 0) {
+        this.saveEmergencyBackup();
+      }
     }
   }
 
@@ -60,6 +122,22 @@ export class BackendDB {
         handleFlush();
       }
     });
+  }
+
+  private saveEmergencyBackup(): void {
+    try {
+      const backupData: Record<string, string> = {};
+      for (const [k, v] of this.#data.entries()) {
+        backupData[k] = v;
+      }
+      const envelope = {
+        _timestamp: Date.now(),
+        data: backupData
+      };
+      localStorage.setItem('EMERGENCY_BACKUP', JSON.stringify(envelope));
+    } catch (e) {
+      console.error('[BackendDB] Failed to save EMERGENCY_BACKUP:', e);
+    }
   }
 
   async flush(): Promise<boolean> {
@@ -113,6 +191,12 @@ export class BackendDB {
         decodedJson = atob(data);
       }
       const parsed = JSON.parse(decodedJson);
+      
+      // Handle timestamped envelope structures cleanly
+      if (parsed && typeof parsed === 'object' && 'payload' in parsed && '_timestamp' in parsed) {
+        return structuredClone(parsed.payload) as T;
+      }
+      
       return structuredClone(parsed) as T;
     } catch (e) {
       console.error('BackendDB decode error for key:', key, e);
@@ -122,11 +206,35 @@ export class BackendDB {
 
   async set<T = any>(key: string, value: T): Promise<void> {
     try {
-      const cloned = structuredClone(value);
-      const stringified = JSON.stringify(cloned);
+      const envelope = {
+        _timestamp: Date.now(),
+        payload: structuredClone(value)
+      };
+      const stringified = JSON.stringify(envelope);
       const encoded = btoa(unescape(encodeURIComponent(stringified))); // Safe for unicode
       this.#data.set(key, encoded);
-      localStorage.setItem(this.storageKeyPrefix + key, encoded);
+      
+      let primaryFailed = false;
+      try {
+        localStorage.setItem(this.storageKeyPrefix + key, encoded);
+        
+        // Immediate save verification: reading back same key and comparing lengths
+        const readBack = localStorage.getItem(this.storageKeyPrefix + key);
+        if (!readBack || readBack.length !== encoded.length) {
+          console.error(`[BackendDB] Immediate save verification failed for key: ${key}. Expected: ${encoded.length}, Got: ${readBack ? readBack.length : 0}`);
+          primaryFailed = true;
+        }
+      } catch (err) {
+        console.error(`[BackendDB] Primary storage write threw error for key: ${key}`, err);
+        primaryFailed = true;
+      }
+
+      if (primaryFailed) {
+        console.warn(`[BackendDB] Primary write failed. Triggering EMERGENCY_BACKUP fallback write.`);
+        this.saveEmergencyBackup();
+      } else {
+        this.saveEmergencyBackup();
+      }
       
       // Guarantee durability on every write
       await this.flush();
@@ -139,12 +247,32 @@ export class BackendDB {
     this.#data.delete(key);
     localStorage.removeItem(this.storageKeyPrefix + key);
     
+    // Trigger backup and sync update on deletes as well
+    this.saveEmergencyBackup();
+    
     // Guarantee durability on delete
     await this.flush();
   }
 }
 
-export const db = new BackendDB();
+// Global hookup to bypass HMR instances deletion
+declare global {
+  interface Window {
+    __backend_db__?: BackendDB;
+  }
+}
+
+let globalDb: BackendDB;
+if (typeof window !== 'undefined') {
+  if (!window.__backend_db__) {
+    window.__backend_db__ = new BackendDB();
+  }
+  globalDb = window.__backend_db__;
+} else {
+  globalDb = new BackendDB();
+}
+
+export const db = globalDb;
 
 // Helper functions for crypto
 export async function sha256(message: string): Promise<string> {

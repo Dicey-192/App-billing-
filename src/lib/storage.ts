@@ -124,7 +124,37 @@ export function useStorage() {
   useEffect(() => {
     async function initStorage() {
       try {
-        const saved = await db.get<AppData>(STORAGE_KEY);
+        let saved = await db.get<AppData>(STORAGE_KEY);
+        
+        // Double-safe fallback: if primary load returned null, try to load from EMERGENCY_BACKUP
+        if (!saved) {
+          console.warn('[useStorage] Primary load returned null. Attempting emergency fallback...');
+          const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
+          if (backupStr) {
+            try {
+              const envelope = JSON.parse(backupStr);
+              if (envelope && envelope.data && envelope.data[STORAGE_KEY]) {
+                const bVal = envelope.data[STORAGE_KEY];
+                let decodedJson: string;
+                try {
+                  decodedJson = decodeURIComponent(escape(atob(bVal)));
+                } catch {
+                  decodedJson = atob(bVal);
+                }
+                const parsed = JSON.parse(decodedJson);
+                if (parsed && typeof parsed === 'object' && 'payload' in parsed) {
+                  saved = parsed.payload;
+                } else {
+                  saved = parsed;
+                }
+                console.log('[useStorage] Successfully recovered data from EMERGENCY_BACKUP.');
+              }
+            } catch (fallbackErr) {
+              console.error('[useStorage] Emergency backup parse failed:', fallbackErr);
+            }
+          }
+        }
+
         if (saved) {
           // Backward compatibility check for plans
           if (!saved.subscriptionPlan) {

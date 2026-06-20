@@ -2080,6 +2080,186 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     }
   };
 
+  const getReceiptIdHelper = (tenantId: string, monthName: string) => {
+    let hash = 0;
+    const str = tenantId + monthName;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash % 90000) + 10000;
+  };
+
+  const generateReceiptHTML = (tenant: any): string => {
+    const element = document.getElementById(`receipt-${tenant.id}`);
+    if (!element) return '';
+    
+    // Copy the DOM element
+    const clone = element.cloneNode(true) as HTMLElement;
+    
+    // Explicit style fixes requested: width 820px, margin 0 auto, style copy, Google fonts, no offset
+    clone.style.width = '820px';
+    clone.style.margin = '0 auto';
+    clone.style.backgroundColor = '#FFFFFF';
+    clone.style.color = '#0F172A';
+    clone.style.padding = '32px';
+    clone.style.boxShadow = 'none';
+    clone.style.border = '1px solid #CBD5E1';
+    clone.style.display = 'block';
+
+    let stylesAndFontsHead = '';
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.googleapis.com">\n`;
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n`;
+    stylesAndFontsHead += `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">\n`;
+    
+    const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
+    styleElements.forEach(s => {
+      stylesAndFontsHead += s.outerHTML + '\n';
+    });
+
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Receipt - ${tenant.name}</title>
+  ${stylesAndFontsHead}
+  <style>
+    body {
+      background-color: #FFFFFF !important;
+      color: #0F172A !important;
+      padding: 40px 0 !important;
+      margin: 0 !important;
+    }
+    .receipt-card {
+      width: 820px !important;
+      max-width: 820px !important;
+      margin: 0 auto !important;
+      background: #FFFFFF !important;
+      color: #0F172A !important;
+      box-shadow: none !important;
+      border: 1px solid #CBD5E1 !important;
+      padding: 32px !important;
+    }
+  </style>
+</head>
+<body>
+  ${clone.outerHTML}
+</body>
+</html>`;
+  };
+
+  const handleBulkPrint = () => {
+    const targets = selectedTenantIds && selectedTenantIds.size > 0 
+      ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
+      : tenants;
+    
+    if (targets.length === 0) {
+      alert("No receipts found to print.");
+      return;
+    }
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow || iframe.contentDocument;
+    if (!iframeDoc) {
+      alert("Failed to build printing frame.");
+      return;
+    }
+
+    let stylesAndFontsHead = '';
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.googleapis.com">\n`;
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n`;
+    stylesAndFontsHead += `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">\n`;
+    
+    const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
+    styleElements.forEach(s => {
+      stylesAndFontsHead += s.outerHTML + '\n';
+    });
+
+    const receiptsPagesHTML = targets.map((tenant: any) => {
+      const element = document.getElementById(`receipt-${tenant.id}`);
+      if (!element) return '';
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.width = '100%';
+      clone.style.maxWidth = '800px';
+      clone.style.margin = '0 auto';
+      clone.style.boxShadow = 'none';
+      clone.style.border = '1px solid #CBD5E1';
+      clone.style.padding = '24px';
+      return `<div class="print-page receipt-page-wrapper" style="page-break-after: always; break-after: page; margin-bottom: 40px; background: #FFFFFF; padding: 20px;">
+        ${clone.outerHTML}
+      </div>`;
+    }).join('\n');
+
+    const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Print Receipts</title>
+  ${stylesAndFontsHead}
+  <style>
+    body {
+      background-color: #FFFFFF !important;
+      color: #0F172A !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .print-page {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+    @media print {
+      body {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+      }
+      .receipt-page-wrapper {
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #FFFFFF !important;
+      }
+      .receipt-card {
+        border: none !important;
+        box-shadow: none !important;
+        background: #FFFFFF !important;
+        color: #0F172A !important;
+        padding: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${receiptsPagesHTML}
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+        setTimeout(function() {
+          window.frameElement.remove();
+        }, 1000);
+      }, 500);
+    };
+  </script>
+</body>
+</html>`;
+
+    const doc = (iframe.contentWindow?.document || (iframe.contentDocument as Document));
+    doc.open();
+    doc.write(printHTML);
+    doc.close();
+  };
+
   const handleBulkDownload = async () => {
     setBulkProcessing(true);
     const zip = new JSZip();
@@ -2091,16 +2271,13 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
         : tenants;
 
       for (const tenant of targets) {
-        const element = document.getElementById(`receipt-${tenant.id}`);
-        if (element) {
-          const canvas = await safeHtml2Canvas(element, { 
-            scale: 2, 
-            useCORS: true, 
-            logging: false,
-            backgroundColor: '#020617'
-          });
-          const imgData = canvas.toDataURL("image/png").split(',')[1];
-          folder?.file(`${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`, imgData, { base64: true });
+        const htmlContent = generateReceiptHTML(tenant);
+        if (htmlContent) {
+          const cleanName = tenant.name.replace(/\s+/g, '_');
+          const dateStr = new Date().toISOString().split('T')[0];
+          const invoiceNum = getReceiptIdHelper(tenant.id, activeMonth || 'Current_Cycle');
+          const filename = `${cleanName}-${dateStr}-${invoiceNum}.html`;
+          folder?.file(filename, htmlContent);
         }
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -2623,7 +2800,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
         <div className="flex gap-2 w-full sm:w-auto">
           <button onClick={downloadSummaryCSV} className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white">Export CSV</button>
           <button 
-            onClick={() => window.print()} 
+            onClick={handleBulkPrint} 
             className="btn-secondary text-[10px] px-4.5 py-2 uppercase font-bold rounded-xl border-white/5 select-none text-slate-400 hover:text-white"
           >
             {selectedTenantIds && selectedTenantIds.size > 0 
