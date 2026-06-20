@@ -27,10 +27,28 @@ export class BackendDB {
   }
 
   async get<T = any>(key: string): Promise<T | null> {
-    const data = this.#data.get(key);
+    let data = this.#data.get(key);
+    if (!data) {
+      try {
+        const localVal = localStorage.getItem(this.storageKeyPrefix + key);
+        if (localVal) {
+          data = localVal;
+          this.#data.set(key, localVal);
+        }
+      } catch (e) {
+        console.error('Fallback read from localStorage failed for key:', key, e);
+      }
+    }
     if (!data) return null;
     try {
-      const decodedJson = atob(data);
+      let decodedJson: string;
+      try {
+        // Try decoding with reverse encodeURIComponent escape sequence for full unicode safety
+        decodedJson = decodeURIComponent(escape(atob(data)));
+      } catch (e) {
+        // Fallback to normal atob in case it wasn't saved with escape/unescape or unicode-safety wrapper
+        decodedJson = atob(data);
+      }
       const parsed = JSON.parse(decodedJson);
       return structuredClone(parsed) as T;
     } catch (e) {
