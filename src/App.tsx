@@ -8,7 +8,7 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import { AIAssistant } from './components/AIAssistant';
@@ -17,6 +17,8 @@ import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
 import { ExpensesView } from './components/ExpensesView';
 import { db, AuditDB } from './lib/db';
+import { initAuth, googleSignIn, getAccessToken, logout as googleLogout } from './lib/googleAuth';
+import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
 
 const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
@@ -242,7 +244,7 @@ export default function App() {
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading } = useStorage();
 
   // Authentication role states
-  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>({ email: 'me.ansari.aatif@gmail.com', role: 'owner' });
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>(null);
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [hasBackup, setHasBackup] = useState(false);
   const [showAlertsDropdown, setShowAlertsDropdown] = useState(false);
@@ -262,6 +264,126 @@ export default function App() {
   const [isBulkSending, setIsBulkSending] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [processingId, setProcessingId] = useState<string | null>(null);
+
+  // Google Auth & Drive States
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [googleBackups, setGoogleBackups] = useState<DriveBackupFile[]>([]);
+  const [isDriveBackingUp, setIsDriveBackingUp] = useState(false);
+  const [isDriveLoadingBackups, setIsDriveLoadingBackups] = useState(false);
+  const [isDriveRestoring, setIsDriveRestoring] = useState(false);
+
+  // Initialize Google Auth listener
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (user, token) => {
+        setGoogleUser(user);
+        setGoogleToken(token);
+        setCurrentUser({ email: user.email || 'authenticated-user@nexum.com', role: 'owner' });
+      },
+      () => {
+        setGoogleUser(null);
+        setGoogleToken(null);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Google Drive backups list automatically when token becomes available
+  const fetchDriveBackups = async (token = googleToken) => {
+    const activeToken = token || googleToken;
+    if (!activeToken) return;
+    setIsDriveLoadingBackups(true);
+    try {
+      const files = await listBackupsFromDrive(activeToken);
+      setGoogleBackups(files);
+    } catch (err) {
+      console.error('[App] listBackupsFromDrive failed:', err);
+      showToast('Failed to fetch backups from Google Drive.');
+    } finally {
+      setIsDriveLoadingBackups(false);
+    }
+  };
+
+  useEffect(() => {
+    if (googleToken) {
+      fetchDriveBackups(googleToken);
+    } else {
+      setGoogleBackups([]);
+    }
+  }, [googleToken]);
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setGoogleUser(result.user);
+        setGoogleToken(result.accessToken);
+        setCurrentUser({ email: result.user.email || 'authenticated-user@nexum.com', role: 'owner' });
+        showToast('Successfully signed in with Google!');
+        await fetchDriveBackups(result.accessToken);
+      }
+    } catch (err: any) {
+      console.error('[App] Google login failed:', err);
+      showToast('Google Sign-In failed or was cancelled.');
+    }
+  };
+
+  const handleGoogleLogout = async () => {
+    try {
+      await googleLogout();
+      setGoogleUser(null);
+      setGoogleToken(null);
+      setGoogleBackups([]);
+      setCurrentUser(null);
+      showToast('Signed out of Google account.');
+    } catch (err) {
+      console.error('[App] Logout error:', err);
+    }
+  };
+
+  const handleBackupToDrive = async () => {
+    if (!googleToken) {
+      showToast('Please sign in with Google first.');
+      return;
+    }
+    setIsDriveBackingUp(true);
+    try {
+      const res = await uploadBackupToDrive(googleToken, data);
+      showToast('Snapshot backup successful!');
+      await fetchDriveBackups(googleToken);
+    } catch (err) {
+      console.error('[App] handleBackupToDrive error:', err);
+      showToast('Google Drive cloud backup failed.');
+    } finally {
+      setIsDriveBackingUp(false);
+    }
+  };
+
+  const handleRestoreFromDrive = async (fileId: string, filename: string) => {
+    if (!googleToken) {
+      showToast('Please sign in with Google first.');
+      return;
+    }
+    if (!confirm(`Are you absolutely sure you want to restore the backup '${filename}' from Google Drive? This will overwrite all current system data.`)) {
+      return;
+    }
+    setIsDriveRestoring(true);
+    try {
+      const remoteData = await downloadBackupFromDrive(googleToken, fileId);
+      if (remoteData && (remoteData.properties || remoteData.tenants || remoteData.activeMonth)) {
+        restoreData(remoteData);
+        showToast('System data restored from Google Drive!');
+      } else {
+        throw new Error('Retrieved backup JSON is invalid or incomplete.');
+      }
+    } catch (err: any) {
+      console.error('[App] handleRestoreFromDrive error:', err);
+      alert(`Restore failed: ${err.message || err}`);
+    } finally {
+      setIsDriveRestoring(false);
+    }
+  };
 
   // Check Backup on mount
   useEffect(() => {
@@ -531,6 +653,24 @@ export default function App() {
         // 0.5 — Save pre-rollover backup snapshot
         await db.set('ROLLOVER_BACKUP', data);
         setHasBackup(true);
+
+        // Absolute JSON Backup Auto-Download Rule before Rollover
+        try {
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          const monthClean = confirmedMonth ? confirmedMonth.replace(/\s+/g, '_') : new Date().toISOString().split('T')[0];
+          link.download = `artha_pre_rollover_backup_${monthClean}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          console.log('[ROLLOVER] Absolute pre-rollover backup downloaded successfully.');
+          showToast('Pre-rollover absolute JSON backup auto-downloaded successfully!');
+        } catch (downloadErr) {
+          console.error('[ROLLOVER] Auto backup download error:', downloadErr);
+        }
 
         const targetProperties = properties;
         if (targetProperties.length === 0 || tenants.length === 0) {
@@ -904,6 +1044,21 @@ export default function App() {
     );
   }
 
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen w-screen items-center justify-center bg-[#070A13] p-4 relative overflow-hidden">
+        {/* Background Mesh Gradients */}
+        <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-[10%] left-[10%] w-[50%] h-[50%] bg-[#76FF03]/[0.015] rounded-full blur-[170px] animate-pulse" />
+          <div className="absolute bottom-[10%] right-[10%] w-[45%] h-[45%] bg-[#76FF03]/[0.012] rounded-full blur-[150px] animate-pulse delay-500" />
+        </div>
+        <div className="relative z-10 w-full max-w-md flex justify-center items-center">
+          <LoginScreen onLogin={(user: any) => setCurrentUser(user)} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
       {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
@@ -1099,8 +1254,46 @@ export default function App() {
                </AnimatePresence>
              </div>
 
-             {/* User profile with admin display chip */}
-             {currentUser && (
+             {/* User profile with admin display chip / Google status */}
+              {googleUser && (
+                <div className="flex items-center gap-2.5 bg-[#76FF03]/5 hover:bg-[#76FF03]/10 border border-[#76FF03]/15 pl-3 pr-2.5 py-1.5 rounded-xl text-left font-sans select-none shrink-0 transition-all">
+                  {googleUser.photoURL && (
+                    <img 
+                      src={googleUser.photoURL} 
+                      alt="Profile" 
+                      referrerPolicy="no-referrer"
+                      className="w-5.5 h-5.5 rounded-full border border-[#76FF03]/30"
+                    />
+                  )}
+                  <div className="flex flex-col text-left">
+                    <span className="text-[9px] font-bold text-white leading-none truncate max-w-[95px]">{googleUser.displayName || googleUser.email?.split('@')[0]}</span>
+                    <span className="text-[7.5px] font-mono uppercase text-[#76FF03] tracking-wider mt-0.5">Google Owner</span>
+                  </div>
+                  <button 
+                    onClick={handleGoogleLogout}
+                    className="ml-1 px-1.5 py-0.5 bg-[#76FF03]/20 hover:bg-[#76FF03]/30 text-white border border-[#76FF03]/30 rounded text-[8px] font-black tracking-widest uppercase transition-all cursor-pointer"
+                    title="Logout from Google"
+                  >
+                    OUT
+                  </button>
+                </div>
+              )}
+              {!googleUser && (
+                <button
+                  onClick={handleGoogleSignIn}
+                  className="flex items-center gap-2 bg-[#76FF03]/10 hover:bg-[#76FF03]/20 border border-[#76FF03]/25 px-3 py-1.5 rounded-xl text-[#76FF03] text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer mr-2 animate-pulse"
+                  title="Sign in with Google to enable cloud backups"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 48 48">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                  </svg>
+                  Google SSO
+                </button>
+              )}
+             {(!googleUser && currentUser) && (
                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
                  <div className="flex flex-col text-right">
                    <span className="text-[10px] font-bold text-white leading-none truncate max-w-[110px]">{currentUser.email.split('@')[0]}</span>
@@ -1245,6 +1438,17 @@ export default function App() {
                 supportMasterOverrideMode={supportMasterOverrideMode}
                 toggleSupportMasterMode={toggleSupportMasterMode}
                 clearAuditLogs={clearAuditLogs}
+                googleUser={googleUser}
+                googleToken={googleToken}
+                googleBackups={googleBackups}
+                isDriveBackingUp={isDriveBackingUp}
+                isDriveLoadingBackups={isDriveLoadingBackups}
+                isDriveRestoring={isDriveRestoring}
+                handleGoogleSignIn={handleGoogleSignIn}
+                handleGoogleLogout={handleGoogleLogout}
+                handleBackupToDrive={handleBackupToDrive}
+                handleRestoreFromDrive={handleRestoreFromDrive}
+                fetchDriveBackups={fetchDriveBackups}
               />
             )}
           </motion.div>
@@ -1896,7 +2100,18 @@ function LegacyDashboardPlaceholder({ data, setBatchModal, setBulkTableModal, pr
 function AdministrativeHubView({ 
   properties, addProperty, updateProperty, deleteProperty, setPropertyModal,
   history, onShowDetail, updateHistoryTenant,
-  data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs
+  data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs,
+  googleUser,
+  googleToken,
+  googleBackups,
+  isDriveBackingUp,
+  isDriveLoadingBackups,
+  isDriveRestoring,
+  handleGoogleSignIn,
+  handleGoogleLogout,
+  handleBackupToDrive,
+  handleRestoreFromDrive,
+  fetchDriveBackups
 }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'properties' | 'history' | 'settings'>('properties');
   
@@ -1960,6 +2175,17 @@ function AdministrativeHubView({
               supportMasterOverrideMode={supportMasterOverrideMode}
               toggleSupportMasterMode={toggleSupportMasterMode}
               clearAuditLogs={clearAuditLogs}
+              googleUser={googleUser}
+              googleToken={googleToken}
+              googleBackups={googleBackups}
+              isDriveBackingUp={isDriveBackingUp}
+              isDriveLoadingBackups={isDriveLoadingBackups}
+              isDriveRestoring={isDriveRestoring}
+              handleGoogleSignIn={handleGoogleSignIn}
+              handleGoogleLogout={handleGoogleLogout}
+              handleBackupToDrive={handleBackupToDrive}
+              handleRestoreFromDrive={handleRestoreFromDrive}
+              fetchDriveBackups={fetchDriveBackups}
             />
           )}
         </motion.div>
@@ -2286,14 +2512,38 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
         ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
         : tenants;
 
+      if (targets.length === 0) {
+        alert("No receipts found to download.");
+        return;
+      }
+
       for (const tenant of targets) {
-        const htmlContent = generateReceiptHTML(tenant);
-        if (htmlContent) {
-          const cleanName = tenant.name.replace(/\s+/g, '_');
-          const dateStr = new Date().toISOString().split('T')[0];
-          const invoiceNum = getReceiptIdHelper(tenant.id, activeMonth || 'Current_Cycle');
-          const filename = `${cleanName}-${dateStr}-${invoiceNum}.html`;
-          folder?.file(filename, htmlContent);
+        const element = document.getElementById(`receipt-${tenant.id}`);
+        if (element) {
+          try {
+            // Render receipt element directly to Canvas with original style settings
+            const canvas = await safeHtml2Canvas(element, { 
+              scale: 2, 
+              useCORS: true, 
+              logging: false,
+              backgroundColor: '#020617' // Match original style background
+            });
+            
+            // Extract the blob of the image and append binary to ZIP file
+            const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+            if (blob) {
+              const arrayBuffer = await blob.arrayBuffer();
+              const cleanName = tenant.name.replace(/\s+/g, '_');
+              const dateStr = new Date().toISOString().split('T')[0];
+              const invoiceNum = getReceiptIdHelper(tenant.id, activeMonth || 'Current_Cycle');
+              const filename = `${cleanName}-${dateStr}-${invoiceNum}.png`;
+              folder?.file(filename, arrayBuffer);
+            }
+          } catch (itemErr) {
+            console.error(`Failed to snapshot receipt for ${tenant.name}`, itemErr);
+          }
+        } else {
+          console.warn(`Receipt element not found for ${tenant.name}, skipping PNG conversion.`);
         }
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -2302,7 +2552,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
       console.error("Bulk download failed", e);
       alert("Bulk download failed. Check console for details.");
     } finally {
-      setBulkProcessing(null);
+      setBulkProcessing(false);
     }
   };
 
@@ -2887,7 +3137,29 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
   );
 }
 
-function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs }: any) {
+function SettingsView({ 
+  data, 
+  restoreData, 
+  quotaUsage, 
+  cleanOldHistory, 
+  dataStats, 
+  recalculateBalances, 
+  auditLogs, 
+  supportMasterOverrideMode, 
+  toggleSupportMasterMode, 
+  clearAuditLogs,
+  googleUser,
+  googleToken,
+  googleBackups,
+  isDriveBackingUp,
+  isDriveLoadingBackups,
+  isDriveRestoring,
+  handleGoogleSignIn,
+  handleGoogleLogout,
+  handleBackupToDrive,
+  handleRestoreFromDrive,
+  fetchDriveBackups
+}: any) {
   const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics'>('backups');
   const [hasSystemBackup, setHasSystemBackup] = React.useState(false);
 
@@ -3001,6 +3273,132 @@ function SettingsView({ data, restoreData, quotaUsage, cleanOldHistory, dataStat
                       <input type="file" className="hidden" accept=".json" onChange={handleRestore} />
                   </label>
                 </div>
+              </div>
+
+              {/* Google Drive Cloud Backup Integration */}
+              <div className="border border-white/5 rounded-3xl p-6 bg-white/[0.01] space-y-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-[#4285F4]/5 rounded-full blur-3xl pointer-events-none" />
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-[#4285F4]/10 rounded-2xl flex items-center justify-center border border-[#4285F4]/20 text-[#4285F4] shadow-md shadow-[#4285F4]/5 shrink-0">
+                      <Cloud className="w-6 h-6 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Google Drive Cloud Ledger Sync</h3>
+                      <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">Securely archive & retrieve ledgers from your private Google Drive</p>
+                    </div>
+                  </div>
+                  <div>
+                    {!googleToken ? (
+                      <button
+                        onClick={handleGoogleSignIn}
+                        className="px-4 py-2 bg-[#4285F4] hover:bg-[#4285F4]/90 text-white font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4 fill-current" viewBox="0 0 48 48">
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        </svg>
+                        Sign In with Google
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <span className="text-[10px] font-bold text-white block uppercase tracking-wider">{googleUser?.email}</span>
+                          <button
+                            onClick={handleGoogleLogout}
+                            className="text-[9px] font-mono font-bold text-[#76FF03] hover:underline uppercase tracking-widest cursor-pointer"
+                          >
+                            Sign Out of Google
+                          </button>
+                        </div>
+                        {googleUser?.photoURL && (
+                          <img 
+                            src={googleUser.photoURL} 
+                            alt="Prof" 
+                            referrerPolicy="no-referrer"
+                            className="w-8 h-8 rounded-full border border-white/10"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {googleToken ? (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950/60 p-4 rounded-2xl border border-white/5">
+                      <div>
+                        <h4 className="text-[11px] font-mono uppercase tracking-widest text-[#76FF03]">Incremental Database Checksum</h4>
+                        <p className="text-[10px] text-slate-400 mt-1">Upload an instant snapshot of properties, tenants, ledger history & rules.</p>
+                      </div>
+                      <button
+                        onClick={handleBackupToDrive}
+                        disabled={isDriveBackingUp}
+                        className="px-4 py-2.5 bg-[#76FF03] font-sans font-black text-slate-950 uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] disabled:opacity-50 cursor-pointer flex items-center gap-2 self-start sm:self-center"
+                      >
+                        <CloudUpload className="w-4 h-4" />
+                        {isDriveBackingUp ? 'ARCHIVING...' : 'SYNC TO DRIVE'}
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black tracking-widest text-slate-500 uppercase font-mono">Available Google Drive Backups ({googleBackups.length})</span>
+                        <button
+                          onClick={() => fetchDriveBackups(googleToken)}
+                          disabled={isDriveLoadingBackups}
+                          className="text-[9px] font-mono font-bold text-[#76FF03] hover:underline uppercase tracking-widest cursor-pointer"
+                        >
+                          {isDriveLoadingBackups ? 'Refreshing...' : 'REFRESH LIST'}
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                        {isDriveLoadingBackups ? (
+                          <div className="text-center py-8 text-slate-400 flex flex-col items-center gap-2">
+                            <div className="w-5 h-5 rounded-full border-2 border-t-transparent border-[#76FF03] animate-spin" />
+                            <span className="text-[10px] font-mono tracking-wider uppercase">Polling storage buckets...</span>
+                          </div>
+                        ) : googleBackups.length === 0 ? (
+                          <div className="text-center py-8 text-slate-500 font-mono text-[10px] border border-dashed border-white/5 rounded-2xl bg-slate-950/20">
+                            No previous backups detected on Google Drive. Click "SYNC TO DRIVE" to push your first snapshot.
+                          </div>
+                        ) : (
+                          googleBackups.map((b) => (
+                            <div key={b.id} className="p-4 bg-slate-950/40 rounded-xl border border-white/5 flex items-center justify-between hover:bg-white/[0.01] hover:border-white/10 transition-all">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-400 shrink-0">
+                                  <Database className="w-4 h-4" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-[11px] font-bold text-white truncate font-mono" title={b.name}>{b.name}</p>
+                                  <p className="text-[9px] text-slate-500 mt-1 uppercase tracking-wider font-sans">
+                                    Saved {new Date(b.createdTime).toLocaleString()}
+                                    {b.size && ` • ${(parseInt(b.size) / 1024).toFixed(1)} KB`}
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleRestoreFromDrive(b.id, b.name)}
+                                disabled={isDriveRestoring}
+                                className="px-2.5 py-1 bg-white/[0.05] hover:bg-[#76FF03]/20 hover:text-[#76FF03] text-slate-400 rounded-lg text-[9px] font-black tracking-widest uppercase border border-white/5 hover:border-[#76FF03]/25 transition-all cursor-pointer"
+                              >
+                                RESTORE
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-6 px-4 border border-dashed border-white/5 rounded-2xl bg-slate-950/20 text-slate-400 flex flex-col items-center gap-3">
+                    <p className="text-[10px] uppercase tracking-widest text-[#76FF03]/70 font-mono">Ledger integration inactive</p>
+                    <p className="text-[11px] max-w-sm leading-relaxed text-slate-500">Sign in with your Google Account using the button above to safely store snapshots. Backups are stored completely server-proxied under your private Google Drive files with secure access tokens.</p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
