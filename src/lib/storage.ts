@@ -19,8 +19,15 @@ const INITIAL_DATA: AppData = {
 };
 
 export function performRecalculation(prev: AppData): AppData {
-  const next = structuredClone(prev);
-  const newHistory = [...next.history].sort((a, b) => a.createdAt - b.createdAt);
+  if (!prev) return INITIAL_DATA;
+  const next = {
+    ...INITIAL_DATA,
+    ...prev,
+    properties: Array.isArray(prev.properties) ? prev.properties : [],
+    tenants: Array.isArray(prev.tenants) ? prev.tenants : [],
+    history: Array.isArray(prev.history) ? prev.history : [],
+  };
+  const newHistory = [...next.history].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const newTenants = [...next.tenants];
   const tenantBalances = new Map<string, number>();
 
@@ -46,11 +53,11 @@ export function performRecalculation(prev: AppData): AppData {
       const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
       
       const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-      const defaultElecCharges = elecUnits * prop.electricRate;
+      const defaultElecCharges = elecUnits * (prop.electricRate || 0);
       const electricityCharges = t.manualOverrides?.electricityCharges !== undefined ? t.manualOverrides.electricityCharges : defaultElecCharges;
       
       const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-      const defaultWaterCharges = waterUnits * prop.waterRate;
+      const defaultWaterCharges = waterUnits * (prop.waterRate || 0);
       const waterCharges = t.manualOverrides?.waterCharges !== undefined ? t.manualOverrides.waterCharges : defaultWaterCharges;
       
       const defaultOtherFees = (t.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
@@ -109,7 +116,7 @@ export function performRecalculation(prev: AppData): AppData {
 
   return {
     ...next,
-    history: processedHistory.sort((a, b) => b.createdAt - a.createdAt),
+    history: processedHistory.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
     tenants: finalTenants
   };
 }
@@ -424,7 +431,14 @@ export function useStorage() {
       ...newData,
       lastBackupAt: Date.now()
     };
-    setData(performRecalculation(next));
+    const recalculated = performRecalculation(next);
+    
+    // Save to database immediately to guarantee persistence before any UI blocking/refresh occurs!
+    db.set(STORAGE_KEY, recalculated).catch(e => {
+      console.error('[useStorage] Immediate restore save failed:', e);
+    });
+
+    setData(recalculated);
   }, []);
 
   const setSubscriptionPlan = useCallback((plan: SubscriptionPlan) => {
