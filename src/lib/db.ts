@@ -216,9 +216,16 @@ export class BackendDB {
 
   async set<T = any>(key: string, value: T): Promise<void> {
     try {
+      let clonedValue: any;
+      try {
+        clonedValue = structuredClone(value);
+      } catch (cloneErr) {
+        console.warn('[BackendDB] structuredClone failed, falling back to JSON clone:', cloneErr);
+        clonedValue = JSON.parse(JSON.stringify(value));
+      }
       const envelope = {
         _timestamp: Date.now(),
-        payload: structuredClone(value)
+        payload: clonedValue
       };
       const stringified = JSON.stringify(envelope);
       this.#data.set(key, stringified);

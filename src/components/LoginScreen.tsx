@@ -37,10 +37,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       const isPopupError = err.code?.includes('cancelled-popup') || 
                            err.message?.includes('cancelled-popup') || 
                            err.code?.includes('popup-blocked') || 
-                           err.message?.includes('popup-blocked');
+                           err.message?.includes('popup-blocked') ||
+                           err.code?.includes('closed-by-user') ||
+                           err.message?.includes('closed-by-user');
       
       if (isPopupError) {
-        setErrorCode('Popup Blocked/Cancelled: Inside the preview iframe, some browsers block Google Auth popups by default. To resolve, click "Bypass connection as owner/manager..." below to test the app locally, or click the Open in New Tab button at the top-right of the screen.');
+        setErrorCode('Popup Blocked/Cancelled/Closed: Inside the preview iframe, some browsers block Google Auth popups or they can close prematurely. To resolve, click "Bypass connection as owner/manager..." below to test the app locally, or click the Open in New Tab button at the top-right of the screen.');
       } else {
         setErrorCode(err.message || 'Google Auth Connection failed.');
       }

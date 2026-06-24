@@ -244,7 +244,26 @@ export default function App() {
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading } = useStorage();
 
   // Authentication role states
-  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>(() => {
+    try {
+      const savedUser = localStorage.getItem('artha_current_user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        localStorage.setItem('artha_current_user', JSON.stringify(currentUser));
+      } else {
+        localStorage.removeItem('artha_current_user');
+      }
+    } catch (e) {
+      console.error('[App] Failed to save user session:', e);
+    }
+  }, [currentUser]);
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [hasBackup, setHasBackup] = useState(false);
   const [showAlertsDropdown, setShowAlertsDropdown] = useState(false);
@@ -325,7 +344,18 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('[App] Google login failed:', err);
-      showToast('Google Sign-In failed or was cancelled.');
+      const isPopupError = err.code?.includes('cancelled-popup') || 
+                           err.message?.includes('cancelled-popup') || 
+                           err.code?.includes('popup-blocked') || 
+                           err.message?.includes('popup-blocked') ||
+                           err.code?.includes('closed-by-user') ||
+                           err.message?.includes('closed-by-user');
+      if (isPopupError) {
+        showToast('Popup closed/blocked. Try opening the app in a New Tab!');
+        alert('Google Sign-In Popup was blocked, closed, or cancelled. Because this app is running inside a secure preview iframe, some browsers block or prematurely close Auth popups. To bypass this, please click the "Open in New Tab" button in the top-right corner of the screen and try again.');
+      } else {
+        showToast(`Google Sign-In failed: ${err.message || err}`);
+      }
     }
   };
 
