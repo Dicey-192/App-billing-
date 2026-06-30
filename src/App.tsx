@@ -8,7 +8,7 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import { AIAssistant } from './components/AIAssistant';
@@ -17,7 +17,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
 import { ExpensesView } from './components/ExpensesView';
 import { db, AuditDB } from './lib/db';
-import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage } from './lib/googleAuth';
+import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
 
 const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
@@ -291,6 +291,7 @@ export default function App() {
   const [isDriveBackingUp, setIsDriveBackingUp] = useState(false);
   const [isDriveLoadingBackups, setIsDriveLoadingBackups] = useState(false);
   const [isDriveRestoring, setIsDriveRestoring] = useState(false);
+  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
 
   // Initialize Google Auth listener
   useEffect(() => {
@@ -316,9 +317,16 @@ export default function App() {
     try {
       const files = await listBackupsFromDrive(activeToken);
       setGoogleBackups(files);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[App] listBackupsFromDrive failed:', err);
-      showToast('Failed to fetch backups from Google Drive.');
+      const isAuthError = err.message?.includes('401') || err.toString()?.includes('401') || err.message?.includes('UNAUTHENTICATED') || err.toString()?.includes('UNAUTHENTICATED');
+      if (isAuthError) {
+        setGoogleToken(null);
+        setCachedAccessToken(null);
+        showToast('Google Drive session expired. Please connect again to refresh.');
+      } else {
+        showToast('Failed to fetch backups from Google Drive.');
+      }
     } finally {
       setIsDriveLoadingBackups(false);
     }
@@ -334,6 +342,7 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     try {
+      setGoogleAuthError(null);
       const result = await googleSignIn();
       if (result) {
         setGoogleUser(result.user);
@@ -345,8 +354,8 @@ export default function App() {
     } catch (err: any) {
       console.error('[App] Google login failed:', err);
       const errMsg = getFirebaseErrorMessage(err);
+      setGoogleAuthError(errMsg);
       showToast('Google Sign-In failed.');
-      alert(errMsg);
     }
   };
 
@@ -356,6 +365,7 @@ export default function App() {
       setGoogleUser(null);
       setGoogleToken(null);
       setGoogleBackups([]);
+      setGoogleAuthError(null);
       setCurrentUser(null);
       showToast('Signed out of Google account.');
     } catch (err) {
@@ -373,9 +383,16 @@ export default function App() {
       const res = await uploadBackupToDrive(googleToken, data);
       showToast('Snapshot backup successful!');
       await fetchDriveBackups(googleToken);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[App] handleBackupToDrive error:', err);
-      showToast('Google Drive cloud backup failed.');
+      const isAuthError = err.message?.includes('401') || err.toString()?.includes('401') || err.message?.includes('UNAUTHENTICATED') || err.toString()?.includes('UNAUTHENTICATED');
+      if (isAuthError) {
+        setGoogleToken(null);
+        setCachedAccessToken(null);
+        showToast('Google Drive session expired. Please connect again.');
+      } else {
+        showToast('Google Drive cloud backup failed.');
+      }
     } finally {
       setIsDriveBackingUp(false);
     }
@@ -400,7 +417,14 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('[App] handleRestoreFromDrive error:', err);
-      alert(`Restore failed: ${err.message || err}`);
+      const isAuthError = err.message?.includes('401') || err.toString()?.includes('401') || err.message?.includes('UNAUTHENTICATED') || err.toString()?.includes('UNAUTHENTICATED');
+      if (isAuthError) {
+        setGoogleToken(null);
+        setCachedAccessToken(null);
+        showToast('Google Drive session expired. Please connect again.');
+      } else {
+        alert(`Restore failed: ${err.message || err}`);
+      }
     } finally {
       setIsDriveRestoring(false);
     }
@@ -1465,11 +1489,16 @@ export default function App() {
                 isDriveBackingUp={isDriveBackingUp}
                 isDriveLoadingBackups={isDriveLoadingBackups}
                 isDriveRestoring={isDriveRestoring}
+                googleAuthError={googleAuthError}
+                setGoogleAuthError={setGoogleAuthError}
+                setGoogleToken={setGoogleToken}
+                setGoogleUser={setGoogleUser}
                 handleGoogleSignIn={handleGoogleSignIn}
                 handleGoogleLogout={handleGoogleLogout}
                 handleBackupToDrive={handleBackupToDrive}
                 handleRestoreFromDrive={handleRestoreFromDrive}
                 fetchDriveBackups={fetchDriveBackups}
+                showToast={showToast}
               />
             )}
           </motion.div>
@@ -2128,11 +2157,16 @@ function AdministrativeHubView({
   isDriveBackingUp,
   isDriveLoadingBackups,
   isDriveRestoring,
+  googleAuthError,
+  setGoogleAuthError,
+  setGoogleToken,
+  setGoogleUser,
   handleGoogleSignIn,
   handleGoogleLogout,
   handleBackupToDrive,
   handleRestoreFromDrive,
-  fetchDriveBackups
+  fetchDriveBackups,
+  showToast
 }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'properties' | 'history' | 'settings'>('properties');
   
@@ -2202,11 +2236,16 @@ function AdministrativeHubView({
               isDriveBackingUp={isDriveBackingUp}
               isDriveLoadingBackups={isDriveLoadingBackups}
               isDriveRestoring={isDriveRestoring}
+              googleAuthError={googleAuthError}
+              setGoogleAuthError={setGoogleAuthError}
+              setGoogleToken={setGoogleToken}
+              setGoogleUser={setGoogleUser}
               handleGoogleSignIn={handleGoogleSignIn}
               handleGoogleLogout={handleGoogleLogout}
               handleBackupToDrive={handleBackupToDrive}
               handleRestoreFromDrive={handleRestoreFromDrive}
               fetchDriveBackups={fetchDriveBackups}
+              showToast={showToast}
             />
           )}
         </motion.div>
@@ -3175,14 +3214,53 @@ function SettingsView({
   isDriveBackingUp,
   isDriveLoadingBackups,
   isDriveRestoring,
+  googleAuthError,
+  setGoogleAuthError,
+  setGoogleToken,
+  setGoogleUser,
   handleGoogleSignIn,
   handleGoogleLogout,
   handleBackupToDrive,
   handleRestoreFromDrive,
-  fetchDriveBackups
+  fetchDriveBackups,
+  showToast
 }: any) {
   const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics'>('backups');
   const [hasSystemBackup, setHasSystemBackup] = React.useState(false);
+  const [manualTokenInput, setManualTokenInput] = React.useState('');
+  const [showDomainGuide, setShowDomainGuide] = React.useState(false);
+  const [domainCopied, setDomainCopied] = React.useState(false);
+
+  const handleCopyDomain = () => {
+    const hostname = window.location.hostname;
+    navigator.clipboard.writeText(hostname).then(() => {
+      setDomainCopied(true);
+      setTimeout(() => setDomainCopied(false), 2000);
+    });
+  };
+
+  const handleManualTokenConnect = async () => {
+    if (!manualTokenInput.trim()) {
+      alert('Please enter a valid Google OAuth Access Token.');
+      return;
+    }
+    const token = manualTokenInput.trim();
+    try {
+      setGoogleAuthError(null);
+      setGoogleToken(token);
+      setGoogleUser({
+        email: 'manual-session@nexum.com',
+        displayName: 'Manual Session',
+        photoURL: null
+      });
+      localStorage.setItem('google_drive_access_token', token);
+      showToast('Connected using manual access token!');
+      await fetchDriveBackups(token);
+    } catch (e: any) {
+      console.error('[Settings] Manual token connect failed:', e);
+      alert('Failed to connect with token: ' + (e.message || e));
+    }
+  };
 
   React.useEffect(() => {
     db.get('ROLLOVER_BACKUP').then(val => {
@@ -3415,9 +3493,98 @@ function SettingsView({
                     </div>
                   </div>
                 ) : (
-                  <div className="text-center py-6 px-4 border border-dashed border-white/5 rounded-2xl bg-slate-950/20 text-slate-400 flex flex-col items-center gap-3">
-                    <p className="text-[10px] uppercase tracking-widest text-[#76FF03]/70 font-mono">Ledger integration inactive</p>
-                    <p className="text-[11px] max-w-sm leading-relaxed text-slate-500">Sign in with your Google Account using the button above to safely store snapshots. Backups are stored completely server-proxied under your private Google Drive files with secure access tokens.</p>
+                  <div className="space-y-6">
+                    <div className="text-center py-6 px-4 border border-dashed border-white/5 rounded-2xl bg-slate-950/20 text-slate-400 flex flex-col items-center gap-3">
+                      <p className="text-[10px] uppercase tracking-widest text-[#76FF03]/70 font-mono">Ledger integration inactive</p>
+                      <p className="text-[11px] max-w-sm leading-relaxed text-slate-500">Sign in with your Google Account using the button above to safely store snapshots. Backups are stored completely server-proxied under your private Google Drive files with secure access tokens.</p>
+                    </div>
+
+                    {/* Google Auth Error Alert Box */}
+                    {googleAuthError && (
+                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center gap-2 text-rose-400 text-[10px] font-mono uppercase tracking-widest font-bold">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                          Authentication Failure Detected
+                        </div>
+                        <p className="text-[11px] text-slate-300 leading-relaxed font-mono whitespace-pre-wrap bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                          {googleAuthError}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Expandable Troubleshooter / Manual Bypass options */}
+                    <div className="border border-white/5 bg-white/[0.005] rounded-2xl p-4 space-y-4">
+                      <button
+                        onClick={() => setShowDomainGuide(!showDomainGuide)}
+                        className="w-full flex items-center justify-between text-left text-[10px] font-bold text-[#76FF03] uppercase tracking-widest font-mono hover:underline cursor-pointer"
+                      >
+                        <span>🔧 Troubleshooting & Domain Auth settings</span>
+                        <span>{showDomainGuide ? '[- CLOSE]' : '[+ EXPAND]'}</span>
+                      </button>
+
+                      {showDomainGuide && (
+                        <div className="space-y-4 text-[11px] text-slate-400 leading-relaxed pt-2 border-t border-white/5">
+                          <p>
+                            Firebase Google Sign-In requires your exact app hosting domain to be registered in the "Authorized domains" list of your Firebase Console. Follow these steps to resolve it in 30 seconds:
+                          </p>
+                          <ol className="list-decimal list-inside space-y-2 bg-slate-950/40 p-3 rounded-xl border border-white/5 font-sans">
+                            <li>
+                              Copy your current hosting domain name: 
+                              <div className="flex items-center gap-2 mt-2 bg-slate-950 px-3 py-2 rounded-lg border border-white/10 font-mono text-white text-[10px] select-all">
+                                <span>{window.location.hostname}</span>
+                                <button
+                                  onClick={handleCopyDomain}
+                                  className="ml-auto px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-[9px] font-sans font-bold text-[#76FF03] border border-white/10 uppercase tracking-wider transition-all cursor-pointer"
+                                >
+                                  {domainCopied ? 'COPIED!' : 'COPY'}
+                                </button>
+                              </div>
+                            </li>
+                            <li>
+                              Open your Firebase Console:
+                              <a
+                                href="https://console.firebase.google.com/project/mineral-vista-ns6r9/authentication/settings"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#4285F4]/15 hover:bg-[#4285F4]/25 text-[#4285F4] rounded-lg border border-[#4285F4]/30 uppercase font-mono text-[9px] font-bold tracking-widest transition-all"
+                              >
+                                Firebase Console Settings
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </li>
+                            <li>
+                              Scroll down to the <strong>"Authorized domains"</strong> section and click <strong>"Add domain"</strong>.
+                            </li>
+                            <li>
+                              Paste the copied domain name and save! Your Google Authentication popup will start working immediately.
+                            </li>
+                          </ol>
+
+                          {/* Manual Token Bypass Option */}
+                          <div className="pt-4 border-t border-white/5 space-y-3">
+                            <h5 className="text-[10px] font-black tracking-widest uppercase text-white font-mono">⚡ Manual Google Access Token Bypass</h5>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wide leading-relaxed">
+                              If you don't have access to the Firebase Console, you can bypass Firebase Auth by pasting any standard Google OAuth Access Token (with <code>drive.file</code> scope) directly below:
+                            </p>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                value={manualTokenInput}
+                                onChange={(e) => setManualTokenInput(e.target.value)}
+                                placeholder="Paste Google OAuth Access Token here (ya29.a0Ac...)"
+                                className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-[11px] font-mono text-white focus:outline-none focus:border-[#76FF03]/50"
+                              />
+                              <button
+                                onClick={handleManualTokenConnect}
+                                className="px-4 py-2 bg-[#76FF03] hover:bg-[#76FF03]/90 text-slate-950 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                CONNECT TOKEN
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
