@@ -94,3 +94,40 @@ export const logout = async () => {
     localStorage.removeItem('google_drive_access_token');
   } catch (e) {}
 };
+
+export function getFirebaseErrorMessage(error: any): string {
+  const code = error?.code || '';
+  const message = error?.message || '';
+
+  const isPopupError = code.includes('cancelled-popup') || 
+                       message.includes('cancelled-popup') || 
+                       code.includes('popup-blocked') || 
+                       message.includes('popup-blocked') ||
+                       code.includes('closed-by-user') ||
+                       message.includes('closed-by-user') ||
+                       code.includes('popup-closed-by-user');
+
+  if (isPopupError) {
+    return 'Google Sign-In popup was blocked, closed, or cancelled. Since this app runs inside an iframe preview, please click the "Open in New Tab" button in the top-right corner of the screen and try again!';
+  }
+
+  if (code === 'auth/unauthorized-domain' || message.includes('unauthorized-domain')) {
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : 'your preview domain';
+    return `Unauthorized Domain: The current domain "${hostname}" is not authorized in your Firebase Project configuration. To resolve this, open your Firebase Console at https://console.firebase.google.com/project/mineral-vista-ns6r9/authentication/settings and add "${hostname}" to your "Authorized domains" list under the Settings tab.`;
+  }
+
+  if (code === 'auth/operation-not-allowed' || message.includes('operation-not-allowed')) {
+    return 'Google Provider Not Enabled: The Google Sign-In provider is disabled in your Firebase project. To resolve this, go to your Firebase Console -> Authentication -> Sign-in method, click "Add new provider", and enable "Google".';
+  }
+
+  if (code === 'auth/invalid-api-key' || message.includes('invalid-api-key')) {
+    return 'Invalid API Key: The Firebase API key configured in firebase-applet-config.json is invalid. Please double check your Firebase credentials.';
+  }
+
+  if (code === 'auth/configuration-not-found' || message.includes('configuration-not-found')) {
+    return 'Firebase Config Error: Google Sign-In is not configured correctly in your Firebase project. Please ensure Google Sign-In is fully set up in the Firebase Console.';
+  }
+
+  return message || error?.toString() || 'Google Authentication failed.';
+}
+

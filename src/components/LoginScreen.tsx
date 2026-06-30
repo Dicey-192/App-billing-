@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, Sparkles, LogIn } from 'lucide-react';
 import { motion } from 'motion/react';
-import { googleSignIn } from '../lib/googleAuth';
+import { googleSignIn, getFirebaseErrorMessage } from '../lib/googleAuth';
 
 interface LoginScreenProps {
   onLogin: (user: { email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' }) => void;
@@ -34,18 +34,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       }
     } catch (err: any) {
       console.error('[LoginScreen] Google Auth Error:', err);
-      const isPopupError = err.code?.includes('cancelled-popup') || 
-                           err.message?.includes('cancelled-popup') || 
-                           err.code?.includes('popup-blocked') || 
-                           err.message?.includes('popup-blocked') ||
-                           err.code?.includes('closed-by-user') ||
-                           err.message?.includes('closed-by-user');
-      
-      if (isPopupError) {
-        setErrorCode('Popup Blocked/Cancelled/Closed: Inside the preview iframe, some browsers block Google Auth popups or they can close prematurely. To resolve, click "Bypass connection as owner/manager..." below to test the app locally, or click the Open in New Tab button at the top-right of the screen.');
-      } else {
-        setErrorCode(err.message || 'Google Auth Connection failed.');
-      }
+      const errMsg = getFirebaseErrorMessage(err);
+      setErrorCode(errMsg);
     } finally {
       setLoading(false);
     }

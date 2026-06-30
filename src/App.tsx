@@ -17,7 +17,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
 import { ExpensesView } from './components/ExpensesView';
 import { db, AuditDB } from './lib/db';
-import { initAuth, googleSignIn, getAccessToken, logout as googleLogout } from './lib/googleAuth';
+import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
 
 const oklabToRgbString = (L: number, a: number, b: number, alpha: number): string => {
@@ -344,18 +344,9 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('[App] Google login failed:', err);
-      const isPopupError = err.code?.includes('cancelled-popup') || 
-                           err.message?.includes('cancelled-popup') || 
-                           err.code?.includes('popup-blocked') || 
-                           err.message?.includes('popup-blocked') ||
-                           err.code?.includes('closed-by-user') ||
-                           err.message?.includes('closed-by-user');
-      if (isPopupError) {
-        showToast('Popup closed/blocked. Try opening the app in a New Tab!');
-        alert('Google Sign-In Popup was blocked, closed, or cancelled. Because this app is running inside a secure preview iframe, some browsers block or prematurely close Auth popups. To bypass this, please click the "Open in New Tab" button in the top-right corner of the screen and try again.');
-      } else {
-        showToast(`Google Sign-In failed: ${err.message || err}`);
-      }
+      const errMsg = getFirebaseErrorMessage(err);
+      showToast('Google Sign-In failed.');
+      alert(errMsg);
     }
   };
 
