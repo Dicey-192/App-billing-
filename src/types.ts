@@ -81,7 +81,7 @@ export interface BillHistoryEntry {
 }
 
 export interface SubscriptionPlan {
-  name: 'Free' | 'Pro';
+  name: 'Free' | 'Pro' | 'Unlimited';
   maxProperties: number;
   maxTenants: number;
   aiAssistant: boolean;
@@ -97,5 +97,6 @@ export interface AppData {
   auditLogs?: AuditLogEntry[];
   supportMasterOverrideMode?: boolean;
   subscriptionPlan?: SubscriptionPlan;
+  calendarSystem?: 'AD' | 'BS';
 }
 

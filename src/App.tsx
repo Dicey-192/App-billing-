@@ -13,9 +13,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import { AIAssistant } from './components/AIAssistant';
 import html2canvas from 'html2canvas';
+import NepaliDate from 'nepali-date-converter';
 import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
-import { ExpensesView } from './components/ExpensesView';
 import { db, AuditDB } from './lib/db';
 import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
@@ -241,12 +241,12 @@ import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, Roll
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
-  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading } = useStorage();
+  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading, calendarSystem, setCalendarSystem } = useStorage();
 
   // Authentication role states
   const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>(() => {
     try {
-      const savedUser = localStorage.getItem('artha_current_user');
+      const savedUser = localStorage.getItem('rentflo_current_user') || localStorage.getItem('artha_current_user');
       return savedUser ? JSON.parse(savedUser) : null;
     } catch {
       return null;
@@ -256,9 +256,9 @@ export default function App() {
   useEffect(() => {
     try {
       if (currentUser) {
-        localStorage.setItem('artha_current_user', JSON.stringify(currentUser));
+        localStorage.setItem('rentflo_current_user', JSON.stringify(currentUser));
       } else {
-        localStorage.removeItem('artha_current_user');
+        localStorage.removeItem('rentflo_current_user');
       }
     } catch (e) {
       console.error('[App] Failed to save user session:', e);
@@ -649,9 +649,14 @@ export default function App() {
   useEffect(() => {
     if (properties.length === 0) return;
     
-    // YYYY-MM format used for storage as string
-    const d = new Date();
-    const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    let currentMonth = '';
+    if (calendarSystem === 'BS') {
+      const nd = new NepaliDate();
+      currentMonth = `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
+    } else {
+      const d = new Date();
+      currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
     
     if (!data.activeMonth) {
       setActiveMonth(currentMonth);
@@ -660,7 +665,7 @@ export default function App() {
         setRolloverPrompt({ open: true, month: currentMonth });
       }
     }
-  }, [data.activeMonth, data.dismissedMonth, properties.length, setActiveMonth, rolloverPrompt.open, rolloverPrompt.month]);
+  }, [data.activeMonth, data.dismissedMonth, properties.length, setActiveMonth, rolloverPrompt.open, rolloverPrompt.month, calendarSystem]);
 
   // ... rest of useMemo ...
   const [searchQuery, setSearchQuery] = useState('');
@@ -706,7 +711,7 @@ export default function App() {
           const link = document.createElement('a');
           link.href = url;
           const monthClean = confirmedMonth ? confirmedMonth.replace(/\s+/g, '_') : new Date().toISOString().split('T')[0];
-          link.download = `artha_pre_rollover_backup_${monthClean}.json`;
+          link.download = `rentflo_pre_rollover_backup_${monthClean}.json`;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
@@ -1075,14 +1080,14 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen bg-[#070A13] items-center justify-center text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
-        {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
+      <div className="flex min-h-screen bg-[#050505] items-center justify-center text-[#F4F4F6] relative overflow-hidden selection:bg-white/20 select-none screen-container">
+        {/* Background Mesh Gradients - Premium Subtle Luminous White Ambience */}
         <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-          <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
-          <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-[#76FF03]/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
+          <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-white/[0.015] rounded-full blur-[160px] animate-pulse" />
+          <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-white/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
         </div>
         <div className="relative flex flex-col items-center space-y-4 z-10">
-          <div className="w-12 h-12 rounded-full border-4 border-t-transparent border-[#76FF03] animate-spin shadow-lg shadow-[#76FF03]/20" />
+          <div className="w-12 h-12 rounded-full border-4 border-t-transparent border-white animate-spin shadow-lg shadow-white/10" />
           <p className="text-xs font-mono tracking-widest text-[#8A8D98] uppercase">Loading Administrative Hub...</p>
         </div>
       </div>
@@ -1091,11 +1096,11 @@ export default function App() {
 
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen w-screen items-center justify-center bg-[#070A13] p-4 relative overflow-hidden">
+      <div className="flex min-h-screen w-screen items-center justify-center bg-[#050505] p-4 relative overflow-hidden">
         {/* Background Mesh Gradients */}
         <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-          <div className="absolute top-[10%] left-[10%] w-[50%] h-[50%] bg-[#76FF03]/[0.015] rounded-full blur-[170px] animate-pulse" />
-          <div className="absolute bottom-[10%] right-[10%] w-[45%] h-[45%] bg-[#76FF03]/[0.012] rounded-full blur-[150px] animate-pulse delay-500" />
+          <div className="absolute top-[10%] left-[10%] w-[50%] h-[50%] bg-white/[0.015] rounded-full blur-[170px] animate-pulse" />
+          <div className="absolute bottom-[10%] right-[10%] w-[45%] h-[45%] bg-white/[0.012] rounded-full blur-[150px] animate-pulse delay-500" />
         </div>
         <div className="relative z-10 w-full max-w-md flex justify-center items-center">
           <LoginScreen onLogin={(user: any) => setCurrentUser(user)} />
@@ -1105,11 +1110,11 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#070A13] text-[#F4F4F6] relative overflow-hidden selection:bg-[#76FF03]/30 select-none screen-container">
-      {/* Background Mesh Gradients - Premium Subtle Luminous Green Ambience */}
+    <div className="flex min-h-screen bg-[#050505] text-[#F4F4F6] relative overflow-hidden selection:bg-white/20 select-none screen-container">
+      {/* Background Mesh Gradients - Premium Subtle Luminous White Ambience */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-[#76FF03]/[0.015] rounded-full blur-[160px] animate-pulse" />
-        <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-[#76FF03]/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
+        <div className="absolute top-[5%] left-[5%] w-[45%] h-[45%] bg-white/[0.015] rounded-full blur-[160px] animate-pulse" />
+        <div className="absolute bottom-[5%] right-[5%] w-[40%] h-[40%] bg-white/[0.012] rounded-full blur-[140px] animate-pulse delay-500" />
       </div>
 
       {/* 3.5 — Command Palette Overlay Modal */}
@@ -1137,7 +1142,7 @@ export default function App() {
                   placeholder="Ctrl+K Search tenants, properties, or sections..."
                   value={paletteQuery}
                   onChange={e => setPaletteQuery(e.target.value)}
-                  className="w-full bg-slate-950 border border-white/5 text-slate-100 rounded-xl px-4 py-2.5 pl-11 text-xs focus:border-[#76FF03]/30 focus:outline-none font-sans font-medium"
+                  className="w-full bg-slate-950 border border-white/5 text-slate-100 rounded-xl px-4 py-2.5 pl-11 text-xs focus:border-white/30 focus:outline-none font-sans font-medium"
                 />
               </div>
 
@@ -1150,10 +1155,10 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={item.action}
-                        className="w-full p-2.5 rounded-xl border border-white/5 hover:border-[#76FF03]/30 flex items-center justify-between text-left hover:bg-white/[0.02] cursor-pointer transition-all"
+                        className="w-full p-2.5 rounded-xl border border-white/5 hover:border-white/30 flex items-center justify-between text-left hover:bg-white/[0.02] cursor-pointer transition-all"
                       >
                         <span className="text-[11px] font-bold text-slate-200">{item.text}</span>
-                        <span className="text-[9px] font-mono font-bold uppercase text-[#76FF03] bg-[#76FF03]/10 px-2 py-0.5 rounded-full border border-[#76FF03]/20">{item.category}</span>
+                        <span className="text-[9px] font-mono font-bold uppercase text-white bg-white/10 px-2 py-0.5 rounded-full border border-white/20">{item.category}</span>
                       </button>
                     ))
                   )}
@@ -1180,8 +1185,8 @@ export default function App() {
           >
             <div className="relative flex flex-col items-center space-y-6 max-w-sm text-center px-6">
               <div className="relative">
-                <div className="w-16 h-16 rounded-full border-4 border-t-transparent border-[#76FF03] animate-spin shadow-lg shadow-[#76FF03]/20" />
-                <span className="absolute inset-x-0 bottom-0 text-[8px] font-black tracking-widest text-[#76FF03] uppercase font-mono text-center">NEX</span>
+                <div className="w-16 h-16 rounded-full border-4 border-t-transparent border-white animate-spin shadow-lg shadow-white/10" />
+                <span className="absolute inset-x-0 bottom-0 text-[8px] font-black tracking-widest text-white uppercase font-mono text-center">NEX</span>
               </div>
               <div className="space-y-1.5">
                 <h3 className="text-lg font-black tracking-tight font-sans uppercase">Rolling Over Cycle</h3>
@@ -1197,12 +1202,12 @@ export default function App() {
       <main className="flex-1 flex flex-col p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full z-10">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-white/5">
           <div className="flex items-center gap-4">
-            <div className="w-1.5 h-8 bg-[#76FF03] rounded-full shadow-[0_0_8px_rgba(118,255,3,0.4)]" />
+            <div className="w-1.5 h-8 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">ARTHA ADMINISTRATIVE COMMAND</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">RENTFLO ADMINISTRATIVE COMMAND</p>
               <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider mt-1.5 flex items-center gap-3 font-sans">
-                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'expenses' ? 'Expense Log' : currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
-                <span className="w-1.5 h-1.5 rounded-full bg-[#76FF03] shadow-[0_0_8px_#76FF03]" />
+                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
+                <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
               </h1>
             </div>
           </div>
@@ -1216,7 +1221,7 @@ export default function App() {
                  onClick={toggleSupportMasterMode}
                  className={cn(
                    "relative w-9 h-4.5 flex items-center rounded-full p-0.5 transition-colors duration-200 cursor-pointer",
-                   supportMasterOverrideMode ? "bg-[#76FF03]" : "bg-zinc-800"
+                   supportMasterOverrideMode ? "bg-white" : "bg-zinc-800"
                  )}
                >
                  <div
@@ -1233,7 +1238,7 @@ export default function App() {
                <button 
                 onClick={handleUndo} 
                 disabled={undoStack.length === 0}
-                className="p-1.5 hover:bg-[#76FF03]/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-[#76FF03]"
+                className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-white"
                 title="Undo (Ctrl+Z)"
                >
                  <Undo2 className="w-4 h-4" />
@@ -1241,7 +1246,7 @@ export default function App() {
                <button 
                 onClick={handleRedo} 
                 disabled={redoStack.length === 0}
-                className="p-1.5 hover:bg-[#76FF03]/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-[#76FF03]"
+                className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-white"
                 title="Redo (Ctrl+Shift+Z)"
                >
                  <Redo2 className="w-4 h-4" />
@@ -1297,62 +1302,24 @@ export default function App() {
                    </>
                  )}
                </AnimatePresence>
-             </div>
+              </div>
 
-             {/* User profile with admin display chip / Google status */}
-              {googleUser && (
-                <div className="flex items-center gap-2.5 bg-[#76FF03]/5 hover:bg-[#76FF03]/10 border border-[#76FF03]/15 pl-3 pr-2.5 py-1.5 rounded-xl text-left font-sans select-none shrink-0 transition-all">
-                  {googleUser.photoURL && (
-                    <img 
-                      src={googleUser.photoURL} 
-                      alt="Profile" 
-                      referrerPolicy="no-referrer"
-                      className="w-5.5 h-5.5 rounded-full border border-[#76FF03]/30"
-                    />
-                  )}
-                  <div className="flex flex-col text-left">
-                    <span className="text-[9px] font-bold text-white leading-none truncate max-w-[95px]">{googleUser.displayName || googleUser.email?.split('@')[0]}</span>
-                    <span className="text-[7.5px] font-mono uppercase text-[#76FF03] tracking-wider mt-0.5">Google Owner</span>
+              {/* User profile with admin display chip */}
+              {currentUser && (
+                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
+                  <div className="flex flex-col text-right">
+                    <span className="text-[10px] font-bold text-white leading-none truncate max-w-[110px]">{currentUser.email.split('@')[0]}</span>
+                    <span className="text-[8px] font-mono uppercase text-slate-400 tracking-widest mt-0.5">{currentUser.role}</span>
                   </div>
-                  <button 
-                    onClick={handleGoogleLogout}
-                    className="ml-1 px-1.5 py-0.5 bg-[#76FF03]/20 hover:bg-[#76FF03]/30 text-white border border-[#76FF03]/30 rounded text-[8px] font-black tracking-widest uppercase transition-all cursor-pointer"
-                    title="Logout from Google"
-                  >
-                    OUT
-                  </button>
                 </div>
               )}
-              {!googleUser && (
-                <button
-                  onClick={handleGoogleSignIn}
-                  className="flex items-center gap-2 bg-[#76FF03]/10 hover:bg-[#76FF03]/20 border border-[#76FF03]/25 px-3 py-1.5 rounded-xl text-[#76FF03] text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer mr-2 animate-pulse"
-                  title="Sign in with Google to enable cloud backups"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 48 48">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                  </svg>
-                  Google SSO
-                </button>
-              )}
-             {(!googleUser && currentUser) && (
-               <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
-                 <div className="flex flex-col text-right">
-                   <span className="text-[10px] font-bold text-white leading-none truncate max-w-[110px]">{currentUser.email.split('@')[0]}</span>
-                   <span className="text-[8px] font-mono uppercase text-[#76FF03] tracking-widest mt-0.5">{currentUser.role}</span>
-                 </div>
-               </div>
-             )}
 
              {/* Action triggers dynamically depending on active context */}
              {currentView === 'tenants' && (
                 <div className="flex flex-wrap gap-2">
                   <button 
                     onClick={() => setBulkTableModal({ open: true })}
-                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-[#76FF03] border border-[#76FF03]/20 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2 animate-pulse"
+                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-white border border-white/20 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2"
                     title="Enter all electricity and water data units serially in a tabular format"
                   >
                     <Clipboard className="w-4 h-4" />
@@ -1366,7 +1333,7 @@ export default function App() {
                       }
                       setTenantModal({ open: true, propertyId: selectedPropertyId === 'all' ? properties[0].id : selectedPropertyId });
                     }}
-                    className="px-4 py-2.5 bg-[#76FF03] hover:bg-[#76FF03]/90 text-[#121316] font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg hover:scale-[1.02] cursor-pointer flex items-center gap-2"
+                    className="px-4 py-2.5 bg-white hover:bg-neutral-100 text-slate-950 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg hover:scale-[1.02] cursor-pointer flex items-center gap-2"
                   >
                     <Plus className="w-4 h-4" />
                     ADD TENANT DEPOSIT
@@ -1419,14 +1386,6 @@ export default function App() {
                 activeMonth={data.activeMonth || ''}
               />
             )}
-            {currentView === 'expenses' && (
-              <ExpensesView
-                properties={properties}
-                formatCurrency={formatCurrency}
-                showToast={showToast}
-                currentUser={currentUser}
-              />
-            )}
             {currentView === 'tenants' && (
               <TenantsView 
                 tenants={filteredTenants}
@@ -1458,6 +1417,7 @@ export default function App() {
                 onOpenProfile={(tenant, property) => setProfileModal({ open: true, tenant, property })}
                 recalculateBalances={recalculateBalances}
                 activeMonth={data.activeMonth}
+                calendarSystem={calendarSystem}
               />
             )}
             {currentView === 'admin' && (
@@ -1499,6 +1459,8 @@ export default function App() {
                 handleRestoreFromDrive={handleRestoreFromDrive}
                 fetchDriveBackups={fetchDriveBackups}
                 showToast={showToast}
+                calendarSystem={calendarSystem}
+                setCalendarSystem={setCalendarSystem}
               />
             )}
           </motion.div>
@@ -2166,7 +2128,10 @@ function AdministrativeHubView({
   handleBackupToDrive,
   handleRestoreFromDrive,
   fetchDriveBackups,
-  showToast
+  showToast,
+  calendarSystem,
+  setCalendarSystem,
+  setActiveMonth
 }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'properties' | 'history' | 'settings'>('properties');
   
@@ -2185,7 +2150,7 @@ function AdministrativeHubView({
             className={cn(
               "flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer",
               activeSubTab === tab.id 
-                ? "bg-[#76FF03] text-[#121316] font-black shadow-[0_0_12px_rgba(118,255,3,0.25)]" 
+                ? "bg-white text-slate-950 font-black shadow-[0_4px_12px_rgba(255,255,255,0.15)]" 
                 : "text-[#8A8D98] hover:text-white"
             )}
           >
@@ -2246,6 +2211,9 @@ function AdministrativeHubView({
               handleRestoreFromDrive={handleRestoreFromDrive}
               fetchDriveBackups={fetchDriveBackups}
               showToast={showToast}
+              calendarSystem={calendarSystem}
+              setCalendarSystem={setCalendarSystem}
+              setActiveMonth={setActiveMonth}
             />
           )}
         </motion.div>
@@ -2264,7 +2232,7 @@ function PropertiesView({ properties, addProperty, updateProperty, deletePropert
         </div>
         <button 
           onClick={() => setPropertyModal({ open: true })}
-          className="px-4 py-2 bg-[#76FF03] hover:bg-[#76FF03]/90 text-[#121316] font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-1.5"
+          className="px-4 py-2 bg-white hover:bg-neutral-100 text-slate-950 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-1.5"
         >
           <Plus className="w-3.5 h-3.5" />
           New Property
@@ -2328,7 +2296,7 @@ function PropertiesView({ properties, addProperty, updateProperty, deletePropert
   );
 }
 
-function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances, activeMonth }: any) {
+function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances, activeMonth, calendarSystem }: any) {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   
@@ -2607,7 +2575,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
         }
       }
       const blob = await zip.generateAsync({ type: "blob" });
-      saveAs(blob, `Artha_Receipts_${new Date().toISOString().split('T')[0]}.zip`);
+      saveAs(blob, `Rentflo_Receipts_${new Date().toISOString().split('T')[0]}.zip`);
     } catch (e) {
       console.error("Bulk download failed", e);
       alert("Bulk download failed. Check console for details.");
@@ -2637,7 +2605,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
               <input 
                 type="text" 
                 placeholder="Search portfolios..." 
-                className="w-full bg-[#282A30]/40 border border-white/5 rounded-full px-5 py-2.5 pl-11 text-xs text-white placeholder-[#8A8D98] focus:ring-1 focus:ring-[#76FF03] outline-none"
+                className="w-full bg-[#282A30]/40 border border-white/5 rounded-full px-5 py-2.5 pl-11 text-xs text-white placeholder-[#8A8D98] focus:ring-1 focus:ring-white outline-none"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -2677,7 +2645,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             <div className="flex flex-col gap-2">
               <button 
                 onClick={() => setBulkTableModal({ open: true })}
-                className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border border-[#76FF03]/20 text-[#76FF03] font-black uppercase tracking-wider rounded-full transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
+                className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border border-white/20 text-white font-black uppercase tracking-wider rounded-full transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
                 title="Enter all electricity and water data units serially in a tabular format"
               >
                 <Clipboard className="w-3.5 h-3.5" />
@@ -2688,10 +2656,10 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                   recalculateBalances();
                   alert('Arrears Recalculation Triggered: Auto-sync completed and remaining balances recalculated downstream.');
                 }}
-                className="w-full py-2.5 bg-[#76FF03]/10 hover:bg-[#76FF03]/20 text-[#76FF03] font-black uppercase tracking-wider rounded-full border border-[#76FF03]/30 transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
+                className="w-full py-2.5 bg-white/10 hover:bg-white/20 text-white font-black uppercase tracking-wider rounded-full border border-white/30 transition-all cursor-pointer flex items-center justify-center gap-2 text-[10px]"
                 title="Force synchronization with past months' arrears"
               >
-                <ArrowDownUp className="w-3.5 h-3.5 animate-pulse" />
+                <ArrowDownUp className="w-3.5 h-3.5" />
                 Sync Now
               </button>
             </div>
@@ -2703,7 +2671,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
             <div className="bg-slate-950/50 p-3 rounded-xl border border-white/5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-slate-400">Current Cycle</span>
-                <span className="text-[10px] font-bold text-[#76FF03] font-mono">{activeMonth || 'Current Month'}</span>
+                <span className="text-[10px] font-bold text-white font-mono">{activeMonth || 'Current Month'}</span>
               </div>
               <div className="flex items-center justify-between text-[9px] text-[#8A8D98] font-mono border-t border-white/5 pt-2">
                 <span>Utility Carriage</span>
@@ -2781,8 +2749,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                     className={cn(
                       "p-4 rounded-3xl border transition-all duration-200 flex flex-col justify-between gap-4 cursor-pointer relative overflow-hidden text-left",
                       isFocused 
-                        ? "bg-[#121316] border-[#76FF03]/50 shadow-xl" 
-                        : "bg-white border-stone-200 hover:border-stone-400 hover:shadow-md"
+                        ? "bg-white/[0.08] border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.4)]" 
+                        : "bg-white/[0.02] border-white/5 hover:border-white/15 hover:shadow-md"
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -2793,10 +2761,10 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                           className={cn(
                             "w-5 h-5 rounded-md flex items-center justify-center transition-colors border shrink-0",
                             isSelected 
-                              ? "bg-[#76FF03] border-[#76FF03] text-[#121316]" 
+                              ? "bg-white border-white text-slate-950" 
                               : isFocused 
-                                ? "border-slate-600 hover:border-[#76FF03]"
-                                : "border-stone-300 hover:border-stone-500"
+                                ? "border-white/40 hover:border-white text-transparent"
+                                : "border-white/20 hover:border-white/40 text-transparent"
                           )}
                         >
                           {isSelected && <Check className="w-3.5 h-3.5" />}
@@ -2806,23 +2774,17 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         <div className={cn(
                           "w-11 h-11 rounded-full font-bold font-sans text-xs flex items-center justify-center border shrink-0 uppercase shadow-sm",
                           isFocused 
-                            ? "bg-slate-800 text-[#76FF03] border-slate-700" 
-                            : "bg-stone-100 text-stone-850 border-stone-200"
+                            ? "bg-white/15 text-white border-white/20" 
+                            : "bg-white/[0.02] text-slate-400 border-white/5"
                         )}>
                           {initials}
                         </div>
 
                         <div className="space-y-0.5">
-                          <h4 className={cn(
-                            "font-bold text-sm tracking-tight font-sans",
-                            isFocused ? "text-white" : "text-slate-900"
-                          )}>
+                          <h4 className="font-bold text-sm tracking-tight font-sans text-white">
                             {t.name}
                           </h4>
-                          <p className={cn(
-                            "text-[10px] font-medium",
-                            isFocused ? "text-slate-400" : "text-stone-500"
-                          )}>
+                          <p className="text-[10px] font-medium text-slate-400">
                             {prop ? prop.name : 'Unknown'} • Rm {t.roomNumber}
                           </p>
                         </div>
@@ -2832,14 +2794,14 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         <span className={cn("px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider", statusClass)}>
                           {status}
                         </span>
-                        <span className={cn("font-mono font-black text-xs tracking-tight", isFocused ? dueColor : outstanding <= 0 ? "text-emerald-600" : "text-rose-600")}>
+                        <span className={cn("font-mono font-black text-xs tracking-tight", isFocused ? dueColor : outstanding <= 0 ? "text-emerald-400" : "text-rose-500")}>
                           {formatCurrency(outstanding)}
                         </span>
                       </div>
                     </div>
 
                     {/* Quick Buttons Grid for Tactile Operations in Center block */}
-                    <div className="grid grid-cols-3 gap-2 border-t border-dashed pt-3 border-stone-200/50">
+                    <div className="grid grid-cols-3 gap-2 border-t border-dashed pt-3 border-white/5">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -2849,8 +2811,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         className={cn(
                           "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
                           isFocused 
-                            ? "bg-slate-900 text-[#76FF03] border-slate-800 hover:bg-slate-800" 
-                            : "bg-stone-50 text-stone-700 border-stone-200 hover:bg-[#121316] hover:text-white"
+                            ? "bg-white/10 text-white border-white/20 hover:bg-white/20" 
+                            : "bg-white/[0.02] text-slate-300 border-white/5 hover:bg-white/10"
                         )}
                       >
                         <Download className="w-3.5 h-3.5" />
@@ -2866,8 +2828,8 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         className={cn(
                           "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
                           isFocused 
-                            ? "bg-[#76FF03] text-slate-950 border-[#76FF03] hover:bg-opacity-95" 
-                            : "bg-emerald-50 text-white border-emerald-500 hover:bg-emerald-600"
+                            ? "bg-white text-slate-950 border-white hover:bg-neutral-100" 
+                            : "bg-white/10 text-white border-white/20 hover:bg-white/20"
                         )}
                       >
                         <CreditCard className="w-3.5 h-3.5" />
@@ -2882,11 +2844,11 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                         className={cn(
                           "py-2 text-[8px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer border",
                           isFocused 
-                            ? "bg-slate-900 text-[#76FF03] border-slate-800 hover:bg-slate-800" 
-                            : "bg-stone-50 text-stone-700 border-stone-200 hover:bg-[#121316] hover:text-white"
+                            ? "bg-white/10 text-white border-white/20 hover:bg-white/20" 
+                            : "bg-white/[0.02] text-slate-300 border-white/5 hover:bg-white/10"
                         )}
                       >
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
                         Alert
                       </button>
                     </div>
@@ -2927,11 +2889,11 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                 <div className="flex md:flex-col gap-3 p-1.5 justify-center items-center">
                   <button 
                     onClick={() => shareViaWhatsApp(activeTenant)}
-                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-white/10 hover:text-white hover:border-white/20 rounded-full text-slate-300 border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
                     title="Send WhatsApp details"
                   >
                     {processingId === activeTenant.id ? (
-                      <div className="w-4 h-4 border-2 border-[#76FF03] border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <MessageCircle className="w-5 h-5 group-hover:scale-110 transition-transform" />
                     )}
@@ -2939,7 +2901,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                   
                   <button 
                     onClick={() => downloadReceipt(activeTenant)}
-                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-slate-300 hover:text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-white/10 hover:text-white hover:border-white/20 rounded-full text-slate-300 hover:text-white border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
                     title="Generate Receipt Image"
                   >
                     {processingId === activeTenant.id ? (
@@ -2951,7 +2913,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
 
                   <button 
                     onClick={() => onOpenProfile(activeTenant, activeProp)}
-                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-[#76FF03]/25 hover:text-[#76FF03] hover:border-[#76FF03]/35 rounded-full text-[#76FF03] border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
+                    className="w-11 h-11 bg-[#282A30]/60 hover:bg-white/10 hover:text-white hover:border-white/20 rounded-full text-slate-300 border border-white/5 transition-all flex items-center justify-center cursor-pointer group shadow-sm"
                     title="Ledger Ledger Manager"
                   >
                     <Edit2 className="w-4.5 h-4.5 group-hover:scale-110 transition-transform" />
@@ -2970,7 +2932,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                       "w-11 h-11 rounded-full border transition-all flex items-center justify-center cursor-pointer shadow-md group",
                       activeTenant.isPaid 
                         ? "bg-rose-500/10 text-rose-400 border-rose-500/15 hover:bg-rose-500/20" 
-                        : "bg-emerald-500/10 text-[#76FF03] border-emerald-500/15 hover:bg-emerald-500/25"
+                        : "bg-emerald-500/10 text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/20"
                     )}
                     title={activeTenant.isPaid ? 'Mark Unpaid' : 'Mark Paid'}
                   >
@@ -2993,14 +2955,14 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                 className="flex-1 p-8 rounded-[24px] bg-[#1A1B20]/95 border border-white/5 relative overflow-hidden space-y-6 w-full"
               >
                 {/* Backglow element */}
-                <div className="absolute top-0 right-0 w-44 h-44 bg-[#76FF03]/5 blur-3xl rounded-full pointer-events-none" />
+                <div className="absolute top-0 right-0 w-44 h-44 bg-white/[0.02] blur-3xl rounded-full pointer-events-none" />
 
                 {/* Top Row: Name, room, and status */}
                 <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-white/5 pb-5">
                   <div className="space-y-1">
                     <span className="text-[10px] font-bold text-[#8A8D98] uppercase tracking-[0.25em] font-mono">portfolio dossier</span>
                     <h3 className="text-2xl font-bold tracking-tight text-white">{activeTenant.name}</h3>
-                    <div className="text-[11px] text-[#76FF03] tracking-wider uppercase font-semibold flex items-center gap-1.5 font-mono">
+                    <div className="text-[11px] text-white tracking-wider uppercase font-semibold flex items-center gap-1.5 font-mono">
                       <Home className="w-3 h-3" />
                       Property: {activeProp?.name} — Room {activeTenant.roomNumber}
                     </div>
@@ -3008,7 +2970,21 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                   
                   <div className="flex items-center gap-2">
                     <button 
-                      onClick={() => rolloverPrompt.month ? setRolloverPrompt({ ...rolloverPrompt, open: true }) : setRolloverPrompt({ open: true, month: new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) })}
+                      onClick={() => {
+                        if (rolloverPrompt.month) {
+                          setRolloverPrompt({ ...rolloverPrompt, open: true });
+                        } else {
+                          let nextMonth = '';
+                          if (calendarSystem === 'BS') {
+                            const nd = new NepaliDate();
+                            nextMonth = `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
+                          } else {
+                            const d = new Date();
+                            nextMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                          }
+                          setRolloverPrompt({ open: true, month: nextMonth });
+                        }
+                      }}
                       className="p-2 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 rounded-xl border border-white/10 transition-all flex items-center justify-center cursor-pointer"
                       title="Initialize Billing Month rollover"
                     >
@@ -3027,7 +3003,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
 
                 {/* Billing Itemized Grid */}
                 <div className="space-y-4">
-                  <h4 className="text-[10px] font-black text-[#76FF03] uppercase tracking-widest font-mono">Billing Matrix Breakdown</h4>
+                  <h4 className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Billing Matrix Breakdown</h4>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     
@@ -3047,7 +3023,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                     <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Electricity Cost</span>
-                        <span className="text-[9px] text-[#76FF03] font-mono font-bold">Rate: {formatCurrency(activeProp?.electricRate || 0)}</span>
+                        <span className="text-[9px] text-white font-mono font-bold">Rate: {formatCurrency(activeProp?.electricRate || 0)}</span>
                       </div>
                       <p className="text-base font-bold font-mono text-white">{formatCurrency(activeDetail?.electricityCharges || 0)}</p>
                       <div className="text-[9px] text-slate-400 font-mono">
@@ -3059,7 +3035,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                     <div className="bg-[#282A30]/40 border border-white/5 rounded-2xl p-4 space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-[9px] text-[#8A8D98] uppercase font-mono tracking-wider font-bold">Water Consumption</span>
-                        <span className="text-[9px] text-[#76FF03] font-mono font-bold">Rate: {formatCurrency(activeProp?.waterRate || 0)}</span>
+                        <span className="text-[9px] text-white font-mono font-bold">Rate: {formatCurrency(activeProp?.waterRate || 0)}</span>
                       </div>
                       <p className="text-base font-bold font-mono text-white">{formatCurrency(activeDetail?.waterCharges || 0)}</p>
                       <div className="text-[9px] text-slate-400 font-mono">
@@ -3076,20 +3052,20 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                   <div className="space-y-2">
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-slate-400">Electricity Reading Level</span>
-                      <span className="text-[#76FF03] font-bold">{activeTenant.currElecReading} Units</span>
+                      <span className="text-white font-bold">{activeTenant.currElecReading} Units</span>
                     </div>
                     <div className="h-1.5 bg-[#282A30] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#76FF03] rounded-full" style={{ width: `${Math.min(100, (activeTenant.currElecReading / 1500) * 100)}%` }} />
+                      <div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, (activeTenant.currElecReading / 1500) * 100)}%` }} />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <div className="flex justify-between text-[10px] font-mono">
                       <span className="text-slate-400">Water Consumption Level</span>
-                      <span className="text-[#76FF03] font-bold">{activeTenant.currWaterReading} Units</span>
+                      <span className="text-white font-bold">{activeTenant.currWaterReading} Units</span>
                     </div>
                     <div className="h-1.5 bg-[#282A30] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#76FF03] rounded-full" style={{ width: `${Math.min(100, (activeTenant.currWaterReading / 1000) * 100)}%` }} />
+                      <div className="h-full bg-white rounded-full" style={{ width: `${Math.min(100, (activeTenant.currWaterReading / 1000) * 100)}%` }} />
                     </div>
                   </div>
                 </div>
@@ -3103,7 +3079,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
                   
                   <button
                     onClick={() => setPaymentModal({ open: true, tenant: activeTenant, property: activeProp })}
-                    className="px-6 py-3.5 rounded-full text-[10px] tracking-widest uppercase font-mono font-black bg-[#76FF03] hover:scale-105 active:scale-95 transition-all text-[#121316] flex items-center gap-2 cursor-pointer shadow-lg shadow-[#76FF03]/10"
+                    className="px-6 py-3.5 rounded-full text-[10px] tracking-widest uppercase font-mono font-black bg-white hover:scale-105 active:scale-95 transition-all text-slate-950 flex items-center gap-2 cursor-pointer shadow-lg shadow-white/5"
                   >
                     <CreditCard className="w-3.5 h-3.5" />
                     Pay Out Now
@@ -3137,7 +3113,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
           <button 
             disabled={bulkProcessing || tenants.length === 0}
             onClick={handleBulkDownload} 
-            className="px-4.5 py-2 bg-[#76FF03] hover:scale-[1.02] text-[#121316] hover:bg-[#76FF03]/90 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 select-none"
+            className="px-4.5 py-2 bg-white hover:scale-[1.02] text-slate-950 hover:bg-neutral-100 transition-all rounded-xl text-[10px] font-bold uppercase tracking-wider disabled:opacity-50 select-none"
           >
             {bulkProcessing 
               ? "Generating..." 
@@ -3223,9 +3199,12 @@ function SettingsView({
   handleBackupToDrive,
   handleRestoreFromDrive,
   fetchDriveBackups,
-  showToast
+  showToast,
+  calendarSystem,
+  setCalendarSystem,
+  setActiveMonth
 }: any) {
-  const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics'>('backups');
+  const [activeTab, setActiveTab ] = React.useState<'backups' | 'overrides' | 'metrics' | 'preferences'>('backups');
   const [hasSystemBackup, setHasSystemBackup] = React.useState(false);
   const [manualTokenInput, setManualTokenInput] = React.useState('');
   const [showDomainGuide, setShowDomainGuide] = React.useState(false);
@@ -3273,7 +3252,7 @@ function SettingsView({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `artha_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `rentflo_backup_${new Date().toISOString().split('T')[0]}.json`;
     link.click();
   };
 
@@ -3299,6 +3278,7 @@ function SettingsView({
   const tabs = [
     { id: 'backups', label: 'Data & Backups', icon: Database },
     { id: 'overrides', label: 'Overrides & Logs', icon: Clipboard },
+    { id: 'preferences', label: 'Calendar Settings', icon: Calendar },
     { id: 'metrics', label: 'Storage & Metrics', icon: History }
   ];
 
@@ -3374,219 +3354,34 @@ function SettingsView({
                 </div>
               </div>
 
-              {/* Google Drive Cloud Backup Integration */}
-              <div className="border border-white/5 rounded-3xl p-6 bg-white/[0.01] space-y-6 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-[#4285F4]/5 rounded-full blur-3xl pointer-events-none" />
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-[#4285F4]/10 rounded-2xl flex items-center justify-center border border-[#4285F4]/20 text-[#4285F4] shadow-md shadow-[#4285F4]/5 shrink-0">
-                      <Cloud className="w-6 h-6 animate-pulse" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Google Drive Cloud Ledger Sync</h3>
-                      <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">Securely archive & retrieve ledgers from your private Google Drive</p>
-                    </div>
+              {/* Ledger Storage & Backup Information Panel */}
+              <div className="border border-white/5 rounded-3xl p-6 bg-white/[0.01] space-y-4 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white/[0.02] rounded-full blur-3xl pointer-events-none" />
+                <div className="flex items-center gap-3 border-b border-white/5 pb-4">
+                  <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center border border-white/20 text-white shadow-md shadow-white/5 shrink-0">
+                    <Database className="w-6 h-6" />
                   </div>
                   <div>
-                    {!googleToken ? (
-                      <button
-                        onClick={handleGoogleSignIn}
-                        className="px-4 py-2 bg-[#4285F4] hover:bg-[#4285F4]/90 text-white font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2"
-                      >
-                        <svg className="w-4 h-4 fill-current" viewBox="0 0 48 48">
-                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                        </svg>
-                        Sign In with Google
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <span className="text-[10px] font-bold text-white block uppercase tracking-wider">{googleUser?.email}</span>
-                          <button
-                            onClick={handleGoogleLogout}
-                            className="text-[9px] font-mono font-bold text-[#76FF03] hover:underline uppercase tracking-widest cursor-pointer"
-                          >
-                            Sign Out of Google
-                          </button>
-                        </div>
-                        {googleUser?.photoURL && (
-                          <img 
-                            src={googleUser.photoURL} 
-                            alt="Prof" 
-                            referrerPolicy="no-referrer"
-                            className="w-8 h-8 rounded-full border border-white/10"
-                          />
-                        )}
-                      </div>
-                    )}
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Local Ledger Storage & File Backups</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide font-mono">Secure, 100% offline-first, private storage in your browser</p>
                   </div>
                 </div>
 
-                {googleToken ? (
-                  <div className="space-y-6">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950/60 p-4 rounded-2xl border border-white/5">
-                      <div>
-                        <h4 className="text-[11px] font-mono uppercase tracking-widest text-[#76FF03]">Incremental Database Checksum</h4>
-                        <p className="text-[10px] text-slate-400 mt-1">Upload an instant snapshot of properties, tenants, ledger history & rules.</p>
-                      </div>
-                      <button
-                        onClick={handleBackupToDrive}
-                        disabled={isDriveBackingUp}
-                        className="px-4 py-2.5 bg-[#76FF03] font-sans font-black text-slate-950 uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] disabled:opacity-50 cursor-pointer flex items-center gap-2 self-start sm:self-center"
-                      >
-                        <CloudUpload className="w-4 h-4" />
-                        {isDriveBackingUp ? 'ARCHIVING...' : 'SYNC TO DRIVE'}
-                      </button>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black tracking-widest text-slate-500 uppercase font-mono">Available Google Drive Backups ({googleBackups.length})</span>
-                        <button
-                          onClick={() => fetchDriveBackups(googleToken)}
-                          disabled={isDriveLoadingBackups}
-                          className="text-[9px] font-mono font-bold text-[#76FF03] hover:underline uppercase tracking-widest cursor-pointer"
-                        >
-                          {isDriveLoadingBackups ? 'Refreshing...' : 'REFRESH LIST'}
-                        </button>
-                      </div>
-
-                      <div className="max-h-64 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                        {isDriveLoadingBackups ? (
-                          <div className="text-center py-8 text-slate-400 flex flex-col items-center gap-2">
-                            <div className="w-5 h-5 rounded-full border-2 border-t-transparent border-[#76FF03] animate-spin" />
-                            <span className="text-[10px] font-mono tracking-wider uppercase">Polling storage buckets...</span>
-                          </div>
-                        ) : googleBackups.length === 0 ? (
-                          <div className="text-center py-8 text-slate-500 font-mono text-[10px] border border-dashed border-white/5 rounded-2xl bg-slate-950/20">
-                            No previous backups detected on Google Drive. Click "SYNC TO DRIVE" to push your first snapshot.
-                          </div>
-                        ) : (
-                          googleBackups.map((b) => (
-                            <div key={b.id} className="p-4 bg-slate-950/40 rounded-xl border border-white/5 flex items-center justify-between hover:bg-white/[0.01] hover:border-white/10 transition-all">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-400 shrink-0">
-                                  <Database className="w-4 h-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] font-bold text-white truncate font-mono" title={b.name}>{b.name}</p>
-                                  <p className="text-[9px] text-slate-500 mt-1 uppercase tracking-wider font-sans">
-                                    Saved {new Date(b.createdTime).toLocaleString()}
-                                    {b.size && ` • ${(parseInt(b.size) / 1024).toFixed(1)} KB`}
-                                  </p>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => handleRestoreFromDrive(b.id, b.name)}
-                                disabled={isDriveRestoring}
-                                className="px-2.5 py-1 bg-white/[0.05] hover:bg-[#76FF03]/20 hover:text-[#76FF03] text-slate-400 rounded-lg text-[9px] font-black tracking-widest uppercase border border-white/5 hover:border-[#76FF03]/25 transition-all cursor-pointer"
-                              >
-                                RESTORE
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  <div className="bg-slate-950/40 border border-white/5 p-4 rounded-2xl space-y-2">
+                    <h4 className="text-[11px] font-mono uppercase tracking-widest text-white font-bold">Offline-First Privacy</h4>
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                      All your property, tenant, and transaction records are saved securely in your browser's persistent storage engine. This data remains preserved across page reloads and browser restarts. No data ever leaves your device without your explicit action.
+                    </p>
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="text-center py-6 px-4 border border-dashed border-white/5 rounded-2xl bg-slate-950/20 text-slate-400 flex flex-col items-center gap-3">
-                      <p className="text-[10px] uppercase tracking-widest text-[#76FF03]/70 font-mono">Ledger integration inactive</p>
-                      <p className="text-[11px] max-w-sm leading-relaxed text-slate-500">Sign in with your Google Account using the button above to safely store snapshots. Backups are stored completely server-proxied under your private Google Drive files with secure access tokens.</p>
-                    </div>
 
-                    {/* Google Auth Error Alert Box */}
-                    {googleAuthError && (
-                      <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 space-y-3">
-                        <div className="flex items-center gap-2 text-rose-400 text-[10px] font-mono uppercase tracking-widest font-bold">
-                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                          Authentication Failure Detected
-                        </div>
-                        <p className="text-[11px] text-slate-300 leading-relaxed font-mono whitespace-pre-wrap bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                          {googleAuthError}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Expandable Troubleshooter / Manual Bypass options */}
-                    <div className="border border-white/5 bg-white/[0.005] rounded-2xl p-4 space-y-4">
-                      <button
-                        onClick={() => setShowDomainGuide(!showDomainGuide)}
-                        className="w-full flex items-center justify-between text-left text-[10px] font-bold text-[#76FF03] uppercase tracking-widest font-mono hover:underline cursor-pointer"
-                      >
-                        <span>🔧 Troubleshooting & Domain Auth settings</span>
-                        <span>{showDomainGuide ? '[- CLOSE]' : '[+ EXPAND]'}</span>
-                      </button>
-
-                      {showDomainGuide && (
-                        <div className="space-y-4 text-[11px] text-slate-400 leading-relaxed pt-2 border-t border-white/5">
-                          <p>
-                            Firebase Google Sign-In requires your exact app hosting domain to be registered in the "Authorized domains" list of your Firebase Console. Follow these steps to resolve it in 30 seconds:
-                          </p>
-                          <ol className="list-decimal list-inside space-y-2 bg-slate-950/40 p-3 rounded-xl border border-white/5 font-sans">
-                            <li>
-                              Copy your current hosting domain name: 
-                              <div className="flex items-center gap-2 mt-2 bg-slate-950 px-3 py-2 rounded-lg border border-white/10 font-mono text-white text-[10px] select-all">
-                                <span>{window.location.hostname}</span>
-                                <button
-                                  onClick={handleCopyDomain}
-                                  className="ml-auto px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-[9px] font-sans font-bold text-[#76FF03] border border-white/10 uppercase tracking-wider transition-all cursor-pointer"
-                                >
-                                  {domainCopied ? 'COPIED!' : 'COPY'}
-                                </button>
-                              </div>
-                            </li>
-                            <li>
-                              Open your Firebase Console:
-                              <a
-                                href="https://console.firebase.google.com/project/mineral-vista-ns6r9/authentication/settings"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#4285F4]/15 hover:bg-[#4285F4]/25 text-[#4285F4] rounded-lg border border-[#4285F4]/30 uppercase font-mono text-[9px] font-bold tracking-widest transition-all"
-                              >
-                                Firebase Console Settings
-                                <ExternalLink className="w-3 h-3" />
-                              </a>
-                            </li>
-                            <li>
-                              Scroll down to the <strong>"Authorized domains"</strong> section and click <strong>"Add domain"</strong>.
-                            </li>
-                            <li>
-                              Paste the copied domain name and save! Your Google Authentication popup will start working immediately.
-                            </li>
-                          </ol>
-
-                          {/* Manual Token Bypass Option */}
-                          <div className="pt-4 border-t border-white/5 space-y-3">
-                            <h5 className="text-[10px] font-black tracking-widest uppercase text-white font-mono">⚡ Manual Google Access Token Bypass</h5>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wide leading-relaxed">
-                              If you don't have access to the Firebase Console, you can bypass Firebase Auth by pasting any standard Google OAuth Access Token (with <code>drive.file</code> scope) directly below:
-                            </p>
-                            <div className="flex flex-col sm:flex-row gap-2">
-                              <input
-                                type="text"
-                                value={manualTokenInput}
-                                onChange={(e) => setManualTokenInput(e.target.value)}
-                                placeholder="Paste Google OAuth Access Token here (ya29.a0Ac...)"
-                                className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-[11px] font-mono text-white focus:outline-none focus:border-[#76FF03]/50"
-                              />
-                              <button
-                                onClick={handleManualTokenConnect}
-                                className="px-4 py-2 bg-[#76FF03] hover:bg-[#76FF03]/90 text-slate-950 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md cursor-pointer whitespace-nowrap shrink-0"
-                              >
-                                CONNECT TOKEN
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  <div className="bg-slate-950/40 border border-white/5 p-4 rounded-2xl space-y-2">
+                    <h4 className="text-[11px] font-mono uppercase tracking-widest text-white font-bold">Import & Export Guidelines</h4>
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                      To safeguard against accidental browser cache clearance, we recommend clicking <strong>Backup JSON</strong> periodically to download your complete database dump. You can import this file anytime using the <strong>Restore</strong> file picker to restore your entire state.
+                    </p>
                   </div>
-                )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -3744,6 +3539,128 @@ function SettingsView({
                     ))}
                   </div>
                 )}
+              </div>
+            </section>
+          </motion.div>
+        )}
+
+        {activeTab === 'preferences' && (
+          <motion.div
+            key="preferences"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            <section className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Billing Calendar Preferences</h3>
+                <p className="text-xs text-slate-400 font-mono mt-1 leading-relaxed">
+                  Choose the calendar system used to track active billing periods and detect month boundaries. Toggling this will alter how the active month cycle is determined and automatically trigger billing month rollovers on the first day of the selected month system.
+                </p>
+              </div>
+
+              {/* Selection cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div 
+                  onClick={() => {
+                    setCalendarSystem('AD');
+                    showToast('Switched to English Gregorian Calendar (A.D.)');
+                  }}
+                  className={cn(
+                    "p-6 rounded-2xl border transition-all duration-300 cursor-pointer text-left flex flex-col justify-between h-44 sm:h-40",
+                    calendarSystem === 'AD'
+                      ? "bg-[#76FF03]/5 border-[#76FF03]/40 shadow-lg shadow-[#76FF03]/5"
+                      : "bg-slate-950/20 border-white/5 hover:border-white/10 hover:bg-slate-950/40"
+                  )}
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white uppercase tracking-widest font-mono">English Calendar (A.D.)</span>
+                      {calendarSystem === 'AD' && <span className="w-2 h-2 rounded-full bg-[#76FF03] shadow-[0_0_8px_#76FF03]" />}
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-wider">Gregorian Solar Cycle</p>
+                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                      Maintains standard Western months (Jan, Feb, Mar...). Automatically prompts for billing rollover on the 1st of every Gregorian month.
+                    </p>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono pt-2 border-t border-white/5 mt-auto">
+                    Cycle Format: <span className="text-white font-bold font-sans">YYYY-MM</span>
+                  </div>
+                </div>
+
+                <div 
+                  onClick={() => {
+                    setCalendarSystem('BS');
+                    showToast('Switched to Nepali Bikram Sambat Calendar (B.S.)');
+                  }}
+                  className={cn(
+                    "p-6 rounded-2xl border transition-all duration-300 cursor-pointer text-left flex flex-col justify-between h-44 sm:h-40",
+                    calendarSystem === 'BS'
+                      ? "bg-[#76FF03]/5 border-[#76FF03]/40 shadow-lg shadow-[#76FF03]/5"
+                      : "bg-slate-950/20 border-white/5 hover:border-white/10 hover:bg-slate-950/40"
+                  )}
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white uppercase tracking-widest font-mono">Nepali Calendar (B.S.)</span>
+                      {calendarSystem === 'BS' && <span className="w-2 h-2 rounded-full bg-[#76FF03] shadow-[0_0_8px_#76FF03]" />}
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-wider">Bikram Sambat Lunar-Solar Cycle</p>
+                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                      Maintains Nepali months (Baisakh, Jetha, Asar, Saun...). Automatically prompts for billing rollover exactly on the 1st day of the Nepali month change.
+                    </p>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono pt-2 border-t border-white/5 mt-auto">
+                    Cycle Format: <span className="text-[#76FF03] font-bold font-sans">BS-YYYY-MM</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Status and Resync Tool */}
+              <div className="bg-white/[0.01] border border-white/5 p-6 rounded-2xl space-y-4">
+                <h4 className="text-xs font-black text-white uppercase tracking-widest font-mono">📅 Calendar Sync Integrity Status</h4>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                  <div className="p-3 bg-slate-950/40 rounded-xl border border-white/5 space-y-1">
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Current English Date</p>
+                    <p className="font-bold text-white font-sans">{new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                  </div>
+                  <div className="p-3 bg-slate-950/40 rounded-xl border border-white/5 space-y-1">
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Current Nepali Date</p>
+                    <p className="font-bold text-[#76FF03] font-sans">{new NepaliDate().format('YYYY MMMM DD')}</p>
+                  </div>
+                  <div className="p-3 bg-[#76FF03]/5 rounded-xl border border-[#76FF03]/10 space-y-1">
+                    <p className="text-[9px] text-[#76FF03]/70 uppercase tracking-widest font-mono">Active Billing Cycle</p>
+                    <p className="font-black text-white font-sans">{formatMonthStr(data.activeMonth)}</p>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-t border-white/5">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-bold text-white uppercase tracking-wider font-mono">Re-synchronize Billing Cycle period</p>
+                    <p className="text-[10px] text-slate-500 leading-relaxed max-w-xl">
+                      If you changed calendar systems, click below to safely re-sync and initialize your active billing cycle month indicator to today's active month under the new calendar system. This will NOT perform a rollover.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      let currentMonth = '';
+                      if (calendarSystem === 'BS') {
+                        const nd = new NepaliDate();
+                        currentMonth = `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
+                      } else {
+                        const d = new Date();
+                        currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                      }
+                      setActiveMonth(currentMonth);
+                      showToast(`Active billing cycle initialized to ${formatMonthStr(currentMonth)}`);
+                    }}
+                    className="px-4 py-2 bg-slate-900 border border-white/10 hover:border-[#76FF03]/40 text-slate-300 hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap self-start sm:self-center font-mono"
+                  >
+                    🔄 Initialize Cycle
+                  </button>
+                </div>
               </div>
             </section>
           </motion.div>

@@ -1,5 +1,5 @@
 {
-  "name": "Artha Billing Management",
+  "name": "Rentflo",
   "description": "Enterprise-ready billing management system for multi-property owners with offline-first support, bulk operations, and digital receipts.",
   "requestFramePermissions": [],
   "majorCapabilities": ["billing", "property-management", "receipt-generation", "offline-first", "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

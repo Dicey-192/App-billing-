@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { AppData, Property, Tenant, BillHistoryEntry, SubscriptionPlan } from '../types';
 import { db } from './db';
 
-const STORAGE_KEY = 'artha_billing_data';
+const STORAGE_KEY = 'rentflo_billing_data';
 
 const INITIAL_PLAN: SubscriptionPlan = {
-  name: 'Free',
-  maxProperties: 2,
-  maxTenants: 5,
-  aiAssistant: false,
+  name: 'Unlimited',
+  maxProperties: 999999,
+  maxTenants: 999999,
+  aiAssistant: true,
 };
 
 const INITIAL_DATA: AppData = {
@@ -16,6 +16,7 @@ const INITIAL_DATA: AppData = {
   tenants: [],
   history: [],
   subscriptionPlan: INITIAL_PLAN,
+  calendarSystem: 'AD',
 };
 
 export function performRecalculation(prev: AppData): AppData {
@@ -124,7 +125,10 @@ export function performRecalculation(prev: AppData): AppData {
 export function useStorage() {
   const [data, setData] = useState<AppData>(() => {
     try {
-      const stored = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
+      let stored = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
+      if (!stored) {
+        stored = localStorage.getItem('_nexum_db_artha_billing_data');
+      }
       if (stored) {
         let parsed: any = null;
         try {
@@ -146,9 +150,7 @@ export function useStorage() {
             saved = parsed;
           }
           if (saved) {
-            if (!saved.subscriptionPlan) {
-              saved.subscriptionPlan = INITIAL_PLAN;
-            }
+            saved.subscriptionPlan = INITIAL_PLAN;
             return saved;
           }
         }
@@ -162,8 +164,8 @@ export function useStorage() {
       const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
       if (backupStr) {
         const envelope = JSON.parse(backupStr);
-        if (envelope && envelope.data && envelope.data[STORAGE_KEY]) {
-          const bVal = envelope.data[STORAGE_KEY];
+        if (envelope && envelope.data && (envelope.data[STORAGE_KEY] || envelope.data['artha_billing_data'])) {
+          const bVal = envelope.data[STORAGE_KEY] || envelope.data['artha_billing_data'];
           let parsedRaw: any = null;
           try {
             parsedRaw = JSON.parse(bVal);
@@ -178,9 +180,7 @@ export function useStorage() {
           }
           const saved = (parsedRaw && typeof parsedRaw === 'object' && 'payload' in parsedRaw) ? parsedRaw.payload : parsedRaw;
           if (saved) {
-            if (!saved.subscriptionPlan) {
-              saved.subscriptionPlan = INITIAL_PLAN;
-            }
+            saved.subscriptionPlan = INITIAL_PLAN;
             return saved;
           }
         }
@@ -225,11 +225,6 @@ export function useStorage() {
 
   const addProperty = useCallback((property: Property) => {
     setData(prev => {
-      const plan = prev.subscriptionPlan || INITIAL_PLAN;
-      if (prev.properties.length >= plan.maxProperties) {
-        alert(`Property limit reached! Maximum ${plan.maxProperties} properties allowed on the ${plan.name} plan. Upgrade to Pro for unlimited properties!`);
-        return prev;
-      }
       const next = {
         ...prev,
         properties: [...prev.properties, property],
@@ -262,11 +257,6 @@ export function useStorage() {
 
   const addTenant = useCallback((tenant: Tenant) => {
     setData(prev => {
-      const plan = prev.subscriptionPlan || INITIAL_PLAN;
-      if (prev.tenants.length >= plan.maxTenants) {
-        alert(`Tenant limit reached! Maximum ${plan.maxTenants} tenants allowed on the ${plan.name} plan. Upgrade to Pro to add more!`);
-        return prev;
-      }
       const next = {
         ...prev,
         tenants: [...prev.tenants, tenant],
@@ -429,10 +419,36 @@ export function useStorage() {
   const restoreData = useCallback((newData: AppData) => {
     const next = {
       ...newData,
-      lastBackupAt: Date.now()
+      lastBackupAt: Date.now(),
+      subscriptionPlan: INITIAL_PLAN
     };
     const recalculated = performRecalculation(next);
     
+    // Direct synchronous local storage writes for bulletproof persistence!
+    try {
+      const envelope = {
+        _timestamp: Date.now(),
+        payload: recalculated
+      };
+      const stringified = JSON.stringify(envelope);
+      localStorage.setItem('_nexum_db_rentflo_billing_data', stringified);
+      localStorage.setItem('_nexum_db_artha_billing_data', stringified);
+      
+      // Also write directly to EMERGENCY_BACKUP
+      const backupData = {
+        rentflo_billing_data: stringified,
+        artha_billing_data: stringified
+      };
+      const backupEnvelope = {
+        _timestamp: Date.now(),
+        data: backupData
+      };
+      localStorage.setItem('EMERGENCY_BACKUP', JSON.stringify(backupEnvelope));
+      console.log('[useStorage] Bulletproof restore data saved synchronously to localStorage and EMERGENCY_BACKUP!');
+    } catch (err) {
+      console.error('[useStorage] Synchronous localStorage write failed:', err);
+    }
+
     // Save to database immediately to guarantee persistence before any UI blocking/refresh occurs!
     db.set(STORAGE_KEY, recalculated).catch(e => {
       console.error('[useStorage] Immediate restore save failed:', e);
@@ -448,6 +464,13 @@ export function useStorage() {
     }));
   }, []);
 
+  const setCalendarSystem = useCallback((calendarSystem: 'AD' | 'BS') => {
+    setData(prev => ({
+      ...prev,
+      calendarSystem
+    }));
+  }, []);
+
   return useMemo(() => ({
     data,
     isLoading,
@@ -459,6 +482,7 @@ export function useStorage() {
     auditLogs: data.auditLogs || [],
     supportMasterOverrideMode: data.supportMasterOverrideMode || false,
     subscriptionPlan: data.subscriptionPlan || INITIAL_PLAN,
+    calendarSystem: data.calendarSystem || 'AD',
     addProperty,
     updateProperty,
     deleteProperty,
@@ -480,5 +504,6 @@ export function useStorage() {
     clearAuditLogs,
     setData,
     setSubscriptionPlan,
-  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan]);
+    setCalendarSystem,
+  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan, setCalendarSystem]);
 }

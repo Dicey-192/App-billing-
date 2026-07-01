@@ -159,7 +159,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [history, tenants, activeMonth]);
 
   function formatMonthStrOnly(mStr: string) {
-    if (!mStr || !mStr.includes('-')) return mStr;
+    if (!mStr) return mStr;
+    const parts = mStr.split('-');
+    if (parts[0] === 'BS') {
+      const NEPALI_MONTHS_SHORT = [
+        'Bai', 'Jet', 'Asa', 'Sau', 'Bha', 'Aso',
+        'Kat', 'Man', 'Pus', 'Mag', 'Pha', 'Cha'
+      ];
+      const monthIdx = parseInt(parts[2] || '1', 10) - 1;
+      return NEPALI_MONTHS_SHORT[monthIdx] || '';
+    }
+    if (!mStr.includes('-')) return mStr;
     const [year, month] = mStr.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1, 1);
     return date.toLocaleDateString('en-IN', { month: 'short' });
@@ -234,7 +244,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] bg-slate-900 border border-white/5 px-3 py-1.5 rounded-xl font-mono text-slate-400">
-            Active Cycle: <span className="text-[#76FF03] font-bold">{formatMonthStr(activeMonth)}</span>
+            Active Cycle: <span className="text-white font-bold">{formatMonthStr(activeMonth)}</span>
           </span>
         </div>
       </div>
@@ -326,21 +336,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="space-y-4">
             <button
               onClick={() => setView('tenants')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-[#76FF03]/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
+              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-white/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
             >
               <div>
                 <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <Users className="w-4 h-4 text-[#76FF03]" />
+                  <Users className="w-4 h-4 text-white" />
                   Access Tenant Ledger
                 </span>
                 <p className="text-[9px] text-slate-500 uppercase tracking-tighter mt-1">Review receipts and collect bills</p>
               </div>
-              <ArrowUpRight className="w-4 h-4 text-slate-600 group-hover:text-[#76FF03] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              <ArrowUpRight className="w-4 h-4 text-slate-600 group-hover:text-white group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
             </button>
 
             <button
               onClick={() => setView('expenses')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-[#76FF03]/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
+              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-yellow-500/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
             >
               <div>
                 <span className="text-xs font-bold text-white flex items-center gap-2">
@@ -354,7 +364,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <button
               onClick={() => setView('admin')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-[#76FF03]/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
+              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-blue-500/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
             >
               <div>
                 <span className="text-xs font-bold text-white flex items-center gap-2">
@@ -367,9 +377,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
 
-          <div className="p-3 bg-[#76FF03]/5 rounded-2xl border border-[#76FF03]/10 text-center flex items-center justify-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-[#76FF03]" />
-            <span className="text-[9px] text-[#76FF03] font-bold uppercase tracking-widest font-mono select-none">Nexum SaaS Engine Core Secure</span>
+          <div className="p-3 bg-white/[0.02] rounded-2xl border border-white/10 text-center flex items-center justify-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-white" />
+            <span className="text-[9px] text-white font-bold uppercase tracking-widest font-mono select-none">Nexum SaaS Engine Core Secure</span>
           </div>
         </div>
       </div>

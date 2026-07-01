@@ -481,8 +481,8 @@ export const RolloverPromptModal: React.FC<{
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Billing Cycle Rollover">
       <div className="space-y-6">
-        <div className="p-6 bg-[#76FF03]/5 rounded-2xl border border-[#76FF03]/10 text-center space-y-4">
-          <div className="w-16 h-16 bg-[#76FF03]/10 rounded-full flex items-center justify-center mx-auto text-[#76FF03]">
+        <div className="p-6 bg-white/[0.02] rounded-2xl border border-white/10 text-center space-y-4">
+          <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mx-auto text-white">
             <Calendar className="w-8 h-8" />
           </div>
           <div className="space-y-1">
@@ -505,12 +505,12 @@ export const RolloverPromptModal: React.FC<{
                 onChange={(e) => setCarryForwardUtilities(e.target.checked)}
                 className="sr-only"
               />
-              <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${carryForwardUtilities ? "bg-[#76FF03] border-[#76FF03] text-slate-950" : "bg-transparent border-white/20 text-transparent"}`}>
+              <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${carryForwardUtilities ? "bg-white border-white text-slate-950" : "bg-transparent border-white/20 text-transparent"}`}>
                 <Check className="w-3.5 h-3.5 font-bold" />
               </div>
             </div>
             <div className="space-y-0.5">
-              <p className="text-xs font-bold text-white group-hover:text-[#76FF03] transition-colors">Carry Forward Utilities & Readings</p>
+              <p className="text-xs font-bold text-white group-hover:text-white/80 transition-colors">Carry Forward Utilities & Readings</p>
               <p className="text-[10px] text-slate-500 leading-relaxed">
                 Automatically copy final electric and water meter readings and unpaid utility balances to the new month as active starting points.
               </p>

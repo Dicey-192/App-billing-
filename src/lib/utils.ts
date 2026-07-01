@@ -69,6 +69,16 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
 export function formatMonthStr(ymStr: string) {
   if (!ymStr) return '';
   const parts = ymStr.split('-');
+  if (parts[0] === 'BS') {
+    const NEPALI_MONTHS = [
+      'Baisakh', 'Jetha', 'Asar', 'Saun', 'Bhadau', 'Asoj',
+      'Kattik', 'Mangsir', 'Pus', 'Magh', 'Phagun', 'Chait'
+    ];
+    const year = parts[1] || '';
+    const monthIdx = parseInt(parts[2] || '1', 10) - 1;
+    const monthName = NEPALI_MONTHS[monthIdx] || '';
+    return `${monthName} ${year} (B.S.)`;
+  }
   if (parts.length < 2) return ymStr;
   const year = parts[0];
   const monthIdx = parseInt(parts[1], 10) - 1;

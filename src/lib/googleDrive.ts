@@ -10,15 +10,15 @@ export interface DriveBackupFile {
  */
 export async function uploadBackupToDrive(accessToken: string, data: any): Promise<{ id: string; name: string }> {
   try {
-    const filename = `artha_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const filename = `rentflo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     const metadata = {
       name: filename,
       mimeType: 'application/json',
-      description: 'Artha Billing System automatic/manual cloud backup',
+      description: 'Rentflo Billing System automatic/manual cloud backup',
     };
     
     const fileContent = JSON.stringify(data, null, 2);
-    const boundary = '---------cloud_backup_boundary_artha_drive---------';
+    const boundary = '---------cloud_backup_boundary_rentflo_drive---------';
     const delimiter = `\r\n--${boundary}\r\n`;
     const close_delim = `\r\n--${boundary}--`;
 
@@ -57,7 +57,7 @@ export async function uploadBackupToDrive(accessToken: string, data: any): Promi
  */
 export async function listBackupsFromDrive(accessToken: string): Promise<DriveBackupFile[]> {
   try {
-    const q = encodeURIComponent("name contains 'artha_backup' and mimeType = 'application/json' and trashed = false");
+    const q = encodeURIComponent("(name contains 'rentflo_backup' or name contains 'artha_backup') and mimeType = 'application/json' and trashed = false");
     const fields = encodeURIComponent("files(id, name, createdTime, size)");
     const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&orderBy=createdTime%20desc`;
 

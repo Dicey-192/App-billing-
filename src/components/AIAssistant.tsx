@@ -80,7 +80,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleSendMessage = (e?: React.FormEvent) => {
+  const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim()) return;
 
@@ -96,12 +96,67 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
     setInput('');
     setIsTyping(true);
 
-    // Simulate luxury AI response delay
-    setTimeout(() => {
-      const response = processQuery(userText);
-      setMessages(prev => [...prev, response]);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: userText,
+          tenants,
+          properties,
+          history
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseData = await response.json();
+
+      if (responseData.error === 'AI_KEY_MISSING') {
+        const localResponse = processQuery(userText);
+        setMessages(prev => [...prev, {
+          ...localResponse,
+          text: `[Offline Mode] ${localResponse.text}`
+        }]);
+      } else if (responseData.text) {
+        let finalType: 'text' | 'receipt' | 'alert' = 'text';
+        let finalData: any = null;
+
+        if (responseData.receiptTenantId) {
+          const tenantId = responseData.receiptTenantId;
+          const tenant = tenants.find(t => t.id === tenantId);
+          if (tenant) {
+            const property = properties.find(p => p.id === tenant.propertyId);
+            if (property) {
+              finalType = 'receipt';
+              finalData = { tenant, property };
+            }
+          }
+        }
+
+        const assistantMsg: Message = {
+          id: Math.random().toString(),
+          sender: 'assistant',
+          text: responseData.text,
+          timestamp: Date.now(),
+          type: finalType,
+          data: finalData
+        };
+        setMessages(prev => [...prev, assistantMsg]);
+      } else {
+        throw new Error('Invalid response structure');
+      }
+    } catch (err) {
+      console.error('[Rentflo AI] Backend call failed, using local fallback:', err);
+      const localResponse = processQuery(userText);
+      setMessages(prev => [...prev, localResponse]);
+    } finally {
       setIsTyping(false);
-    }, 800000 / 1000000 + 800); // realistic typing delay
+    }
   };
 
   // Sentient NLP-like query analyzer
@@ -294,7 +349,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
           <div className="flex items-center gap-1">
             <span className="font-sans font-extrabold text-white tracking-wide uppercase">Rental Statement</span>
           </div>
-          <span className="text-[9px] font-bold uppercase text-[#76FF03] font-mono">Aurelia Render</span>
+          <span className="text-[9px] font-bold uppercase text-white font-mono">Aurelia Render</span>
         </div>
 
         <div className="space-y-1">
@@ -333,7 +388,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
 
         <div className="flex justify-between items-center bg-white/[0.02] border border-white/5 p-2 rounded-lg font-sans">
           <span className="font-sans font-bold text-[9px] uppercase text-slate-500">Balance Remaining</span>
-          <span className="font-bold text-sm tracking-tight" style={{ color: billing.outstandingBalance <= 0 ? '#16A34A' : '#76FF03' }}>
+          <span className="font-bold text-sm tracking-tight" style={{ color: billing.outstandingBalance <= 0 ? '#10B981' : '#FFFFFF' }}>
             {formatCurrency(billing.outstandingBalance)}
           </span>
         </div>
@@ -344,14 +399,14 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
   return (
     <>
       {/* Floating Activation Ring (Always Floating on Bottom Right) */}
-      <div className="fixed bottom-24 md:bottom-8 right-6 z-50">
+      <div className="fixed bottom-28 md:bottom-28 right-6 z-50">
         <button
           id="assistant-trigger"
           onClick={() => {
             setIsOpen(prev => !prev);
             setNotificationCount(0); // clear count on open
           }}
-          className="relative w-14 h-14 rounded-full bg-slate-950 backdrop-blur-md flex items-center justify-center text-[#76FF03] shadow-[0_0_20px_rgba(118,255,3,0.3)] border border-[#76FF03]/80 hover:scale-110 active:scale-95 transition-all outline-none"
+          className="relative w-14 h-14 rounded-full bg-slate-950 backdrop-blur-md flex items-center justify-center text-white shadow-[0_8px_24px_rgba(255,255,255,0.1)] border border-white/40 hover:scale-110 active:scale-95 transition-all outline-none"
         >
           {isOpen ? (
             <X className="w-6 h-6 animate-spin-once" />
@@ -360,7 +415,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
           )}
 
           {/* Luminous Pulsing Ring Effect */}
-          <span className="absolute -inset-1 rounded-full border border-[#76FF03]/30 animate-ping opacity-75 pointer-events-none" />
+          <span className="absolute -inset-1 rounded-full border border-white/20 animate-ping opacity-75 pointer-events-none" />
 
           {/* Proactive Notification Badge */}
           {notificationCount > 0 && !isOpen && (
@@ -383,13 +438,13 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
             {/* Elegant Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between bg-slate-900/40">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-[#76FF03]/10 border border-[#76FF03]/20 flex items-center justify-center text-[#76FF03]">
+                <div className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white">
                   <Sparkles className="w-4 h-4 animate-pulse" />
                 </div>
                 <div>
                   <h4 className="font-sans font-black text-white text-sm tracking-tight leading-none flex items-center gap-1 uppercase">
                     Aurelia 
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#76FF03] shadow-[0_0_6px_#76FF03]" />
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_white]" />
                   </h4>
                   <span className="text-[9px] uppercase tracking-widest text-[#8A8D98] font-bold block mt-1">Concierge Intellect</span>
                 </div>
@@ -412,7 +467,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
                   <div 
                     className={`px-4 py-3 rounded-2xl text-xs leading-relaxed shadow-sm ${
                       m.sender === 'user' 
-                        ? 'bg-[#76FF03]/15 text-white rounded-tr-none border border-[#76FF03]/20' 
+                        ? 'bg-white/10 text-white rounded-tr-none border border-white/20' 
                         : 'bg-white/[0.03] text-slate-200 rounded-tl-none border border-white/5'
                     }`}
                   >
@@ -434,9 +489,9 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
                 <div className="mr-auto flex flex-col items-start max-w-[80%]">
                   <div className="px-4 py-3 rounded-2xl rounded-tl-none bg-white/[0.02] text-xs border border-white/5">
                     <div className="flex items-center gap-1 mt-0.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#76FF03] animate-bounce [animation-delay:-0.3s]" />
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#76FF03] animate-bounce [animation-delay:-0.15s]" />
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#76FF03] animate-bounce" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-white animate-bounce [animation-delay:-0.3s]" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-white animate-bounce [animation-delay:-0.15s]" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-white animate-bounce" />
                     </div>
                   </div>
                 </div>
@@ -446,7 +501,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
 
             {/* Chat Control Input form */}
             <form onSubmit={handleSendMessage} className="p-3 border-t border-white/5 bg-slate-900/40">
-              <div className="relative flex items-center bg-slate-900 rounded-xl border border-white/5 focus-within:border-[#76FF03]/30 focus-within:ring-1 focus-within:ring-[#76FF03]/30 transition-all">
+              <div className="relative flex items-center bg-slate-900 rounded-xl border border-white/5 focus-within:border-white/30 focus-within:ring-1 focus-within:ring-white/30 transition-all">
                 <input
                   type="text"
                   placeholder="Request Aurelia's help..."
@@ -456,7 +511,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
                 />
                 <button
                   type="submit"
-                  className="absolute right-2 p-1.5 rounded-lg text-[#76FF03] hover:bg-[#76FF03]/10 transition-colors"
+                  className="absolute right-2 p-1.5 rounded-lg text-white hover:bg-white/10 transition-colors"
                 >
                   <Send className="w-4 h-4" />
                 </button>
