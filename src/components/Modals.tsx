@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot, ManualOverrides } from '../types';
 import { generateId, cn, formatCurrency, getTenantBillingDetails } from '../lib/utils';
 import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2 } from 'lucide-react';
@@ -545,23 +545,52 @@ export const RolloverPromptModal: React.FC<{
 export const PaymentModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  tenant: Tenant;
-  property: Property;
-  onSave: (updates: Partial<Tenant>) => void;
-}> = ({ isOpen, onClose, tenant, property, onSave }) => {
+  tenant?: Tenant;
+  property?: Property;
+  tenants?: Tenant[];
+  properties?: Property[];
+  onSave: (tenantId: string, updates: Partial<Tenant>) => void;
+}> = ({ isOpen, onClose, tenant: initialTenant, property: initialProperty, tenants = [], properties = [], onSave }) => {
+  const [selectedTenantId, setSelectedTenantId] = useState<string>(initialTenant?.id || '');
   const [amount, setAmount] = useState<number>(0);
   const [note, setNote] = useState('');
 
-  const elecUnits = Math.max(0, tenant.currElecReading - tenant.prevElecReading);
-  const waterUnits = Math.max(0, tenant.currWaterReading - tenant.prevWaterReading);
-  const totalExtra = tenant.expenses.reduce((acc, exp) => acc + exp.amount, 0);
-  const totalDue = tenant.rent + (elecUnits * property.electricRate) + (waterUnits * property.waterRate) + totalExtra + tenant.previousDues;
-  
-  const currentPaid = tenant.paidAmount || 0;
-  const balance = totalDue - currentPaid;
+  useEffect(() => {
+    if (initialTenant?.id) {
+      setSelectedTenantId(initialTenant.id);
+    } else {
+      setSelectedTenantId('');
+    }
+  }, [initialTenant]);
+
+  const activeTenant = useMemo(() => {
+    if (initialTenant) return initialTenant;
+    return tenants.find(t => t.id === selectedTenantId) || null;
+  }, [initialTenant, tenants, selectedTenantId]);
+
+  const activeProperty = useMemo(() => {
+    if (initialProperty) return initialProperty;
+    if (!activeTenant) return null;
+    return properties.find(p => p.id === activeTenant.propertyId) || null;
+  }, [initialProperty, properties, activeTenant]);
+
+  const billingDetails = useMemo(() => {
+    if (!activeTenant || !activeProperty) return null;
+    const elecUnits = Math.max(0, activeTenant.currElecReading - activeTenant.prevElecReading);
+    const waterUnits = Math.max(0, activeTenant.currWaterReading - activeTenant.prevWaterReading);
+    const totalExtra = (activeTenant.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
+    const totalDue = activeTenant.rent + (elecUnits * activeProperty.electricRate) + (waterUnits * activeProperty.waterRate) + totalExtra + activeTenant.previousDues;
+    const currentPaid = activeTenant.paidAmount || 0;
+    const balance = totalDue - currentPaid;
+    return {
+      totalDue,
+      currentPaid,
+      balance
+    };
+  }, [activeTenant, activeProperty]);
 
   const handleAddPayment = () => {
-    if (amount <= 0) return;
+    if (!activeTenant || amount <= 0) return;
     
     const newRecord: PaymentRecord = {
       id: generateId(),
@@ -570,11 +599,13 @@ export const PaymentModal: React.FC<{
       note: note
     };
 
+    const currentPaid = activeTenant.paidAmount || 0;
+    const totalDue = billingDetails?.totalDue || activeTenant.rent;
     const newPaidAmount = currentPaid + amount;
     const isFullyPaid = newPaidAmount >= totalDue;
 
-    onSave({
-      payments: [...(tenant.payments || []), newRecord],
+    onSave(activeTenant.id, {
+      payments: [...(activeTenant.payments || []), newRecord],
       paidAmount: newPaidAmount,
       isPaid: isFullyPaid
     });
@@ -585,72 +616,97 @@ export const PaymentModal: React.FC<{
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Record Payment: ${tenant.name}`}>
+    <Modal isOpen={isOpen} onClose={onClose} title={activeTenant ? `Record Payment: ${activeTenant.name}` : 'Record New Payment'}>
       <div className="space-y-6">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
-             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Due</p>
-             <p className="text-lg font-bold text-white font-mono">₹{totalDue.toLocaleString()}</p>
+        {!initialTenant && (
+          <div className="space-y-1.5 text-left">
+            <label className="text-[10px] font-black text-[#A3A3A3] uppercase tracking-widest ml-1">Select Tenant</label>
+            <select
+              value={selectedTenantId}
+              onChange={(e) => setSelectedTenantId(e.target.value)}
+              className="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-white/20 cursor-pointer"
+            >
+              <option value="">-- Choose Tenant --</option>
+              {tenants.map(t => {
+                const prop = properties.find(p => p.id === t.propertyId);
+                return (
+                  <option key={t.id} value={t.id}>
+                    {t.name} (Rm {t.roomNumber} - {prop ? prop.name : 'Unknown'})
+                  </option>
+                );
+              })}
+            </select>
           </div>
-          <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
-             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Balance</p>
-             <p className={cn("text-lg font-bold font-mono", balance > 0 ? "text-rose-400" : "text-emerald-400")}>
-               ₹{balance.toLocaleString()}
-             </p>
-          </div>
-        </div>
+        )}
 
-        <div className="space-y-4">
-           {tenant.payments && tenant.payments.length > 0 && (
-             <div className="space-y-2">
-                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">Payment History</p>
-                <div className="max-h-32 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
-                   {tenant.payments.map((p) => (
-                     <div key={p.id} className="flex justify-between items-center px-3 py-2 bg-slate-900/50 rounded-xl border border-white/5 text-[10px]">
-                        <div className="flex items-center gap-2">
-                           <Check className="w-3 h-3 text-emerald-500" />
-                           <span className="font-bold text-white">₹{p.amount.toLocaleString()}</span>
-                           <span className="text-slate-500 italic">— {p.note || 'No note'}</span>
-                        </div>
-                        <span className="text-slate-600 font-mono">{new Date(p.date).toLocaleDateString()}</span>
-                     </div>
-                   ))}
-                </div>
-             </div>
-           )}
-
-           <div className="space-y-3">
-              <div>
-                <label className="label">Amount Received</label>
-                <div className="relative">
-                   <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                   <input 
-                    type="number" 
-                    className="input pl-10 bg-slate-900 border-white/10" 
-                    value={amount} 
-                    onChange={e => setAmount(Number(e.target.value))} 
-                   />
-                </div>
+        {billingDetails && activeTenant && (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
+                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Due</p>
+                 <p className="text-lg font-bold text-white font-mono">₹{billingDetails.totalDue.toLocaleString()}</p>
               </div>
-              <div>
-                <label className="label">Payment Note</label>
-                <input 
-                  className="input bg-slate-900 border-white/10" 
-                  placeholder="GPay / Cash / Partial..." 
-                  value={note} 
-                  onChange={e => setNote(e.target.value)} 
-                />
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
+                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Balance</p>
+                 <p className={cn("text-lg font-bold font-mono", billingDetails.balance > 0 ? "text-rose-400" : "text-emerald-400")}>
+                   ₹{billingDetails.balance.toLocaleString()}
+                 </p>
               </div>
-           </div>
-        </div>
+            </div>
 
-        <button 
-          onClick={handleAddPayment}
-          disabled={amount <= 0}
-          className="btn-primary w-full py-4 text-[10px] font-black uppercase tracking-[0.2em] shadow-xl disabled:opacity-50"
-        >
-          Confirm Transaction
-        </button>
+            <div className="space-y-4">
+               {activeTenant.payments && activeTenant.payments.length > 0 && (
+                 <div className="space-y-2">
+                    <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest ml-1">Payment History</p>
+                    <div className="max-h-32 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
+                       {activeTenant.payments.map((p) => (
+                         <div key={p.id} className="flex justify-between items-center px-3 py-2 bg-slate-900/50 rounded-xl border border-white/5 text-[10px]">
+                            <div className="flex items-center gap-2">
+                               <Check className="w-3 h-3 text-emerald-500" />
+                               <span className="font-bold text-white">₹{p.amount.toLocaleString()}</span>
+                               <span className="text-slate-500 italic">— {p.note || 'No note'}</span>
+                            </div>
+                            <span className="text-slate-600 font-mono">{new Date(p.date).toLocaleDateString()}</span>
+                         </div>
+                       ))}
+                    </div>
+                 </div>
+               )}
+
+               <div className="space-y-3">
+                  <div>
+                    <label className="label">Amount Received</label>
+                    <div className="relative">
+                       <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                       <input 
+                        type="number" 
+                        className="input pl-10 bg-slate-900 border-white/10" 
+                        value={amount || ''} 
+                        onChange={e => setAmount(Number(e.target.value))} 
+                       />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Payment Note</label>
+                    <input 
+                      className="input bg-slate-900 border-white/10" 
+                      placeholder="GPay / Cash / Partial..." 
+                      value={note} 
+                      onChange={e => setNote(e.target.value)} 
+                    />
+                  </div>
+               </div>
+            </div>
+
+            <button 
+              onClick={handleAddPayment}
+              disabled={amount <= 0}
+              className="btn-primary w-full py-4 text-[10px] font-black uppercase tracking-[0.2em] shadow-xl disabled:opacity-50"
+            >
+              Confirm Transaction
+            </button>
+          </>
+        )}
       </div>
     </Modal>
   );

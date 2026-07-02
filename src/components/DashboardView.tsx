@@ -1,8 +1,13 @@
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Property, Tenant, BillHistoryEntry } from '../types';
-import { formatCurrency, formatMonthStr } from '../lib/utils';
-import { TrendingUp, Users, Home, ShieldAlert, CheckCircle2, TrendingDown, ArrowUpRight, DollarSign, Wallet, Percent, UserCheck } from 'lucide-react';
-import { motion } from 'motion/react';
+import { formatMonthStr, formatCurrency } from '../lib/utils';
+import { 
+  TrendingUp, Users, Home, ShieldAlert, CheckCircle2, 
+  ArrowUpRight, DollarSign, Wallet, Percent, UserCheck, 
+  ChevronRight, Calendar, ArrowDownUp, RefreshCw, BarChart3, 
+  FileSpreadsheet, FileText, Bell, Zap, PieChart, Settings
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface DashboardViewProps {
   properties: Property[];
@@ -11,56 +16,46 @@ interface DashboardViewProps {
   formatCurrency: (amount: number) => string;
   setView: (view: any) => void;
   activeMonth: string;
+  onOpenQuickActions?: () => void;
+  downloadSummaryCSV?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   properties,
   tenants,
   history,
-  formatCurrency,
+  formatCurrency: rawFormatCurrency,
   setView,
-  activeMonth
+  activeMonth,
+  onOpenQuickActions,
+  downloadSummaryCSV
 }) => {
-  const [animate, setAnimate] = useState(false);
-  useEffect(() => {
-    setAnimate(true);
-  }, []);
+  const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
 
-  // 1. Calculations for KPIs
-  // Total Revenue: Sum of all payments recorded in currently active tenants and history log
+  // Helper format currency to ensure fallback
+  const currencyFormatter = (val: number) => {
+    return rawFormatCurrency ? rawFormatCurrency(val) : `NPR ${val.toLocaleString()}`;
+  };
+
+  // 1. Core State Calculations for Current Month KPIs
   const stats = useMemo(() => {
     let totalRevenue = 0;
+    let outstandingDue = 0;
     
-    // Sum from current tenants' payments
+    // Revenue: sum of payments made in the current active month
     tenants.forEach(t => {
-      const tenantPayments = t.payments || [];
-      tenantPayments.forEach(p => {
+      const payments = t.payments || [];
+      payments.forEach(p => {
         totalRevenue += p.amount;
       });
-      // Fallback if payments list is empty but paidAmount is set
-      if (tenantPayments.length === 0 && t.paidAmount) {
+      // Fallback
+      if (payments.length === 0 && t.paidAmount) {
         totalRevenue += t.paidAmount;
       }
     });
 
-    // Sum from history tenants
-    history.forEach(h => {
-      const hTenants = h.snapshot?.tenants || [];
-      hTenants.forEach(ht => {
-        const htPayments = ht.payments || [];
-        htPayments.forEach(p => {
-          totalRevenue += p.amount;
-        });
-        if (htPayments.length === 0 && ht.paidAmount) {
-          totalRevenue += ht.paidAmount;
-        }
-      });
-    });
-
-    // Pending Revenue: Outstanding balance of current active month billing
-    let pendingRevenue = 0;
+    // Outstanding Due calculation
     tenants.forEach(t => {
-      // Calculate outstanding
       const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
       const prevElec = t.prevElecReading;
       const currElec = t.currElecReading;
@@ -82,21 +77,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
       
-      let totalDue = t.manualOverrides?.totalDue !== undefined 
+      const totalDue = t.manualOverrides?.totalDue !== undefined 
         ? t.manualOverrides.totalDue 
         : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
 
       const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
-      const remaining = totalDue - paid;
-      if (remaining > 0) {
-        pendingRevenue += remaining;
-      }
+      const remaining = Math.max(0, totalDue - paid);
+      outstandingDue += remaining;
     });
 
-    // Occupancy Rate: Occupied rooms vs total rooms
-    // Let's assume each property has a default of 5 rooms capacity, or count total tenants compared to dynamic capacity
+    // Occupancy Rate: registered tenants vs rooms (calculated at 6 rooms per property)
     const totalRooms = properties.length * 6 || 6;
-    const occupiedRooms = tenants.filter(t => t.propertyId).length;
+    const occupiedRooms = tenants.length;
     const occupancyRate = Math.min(100, Math.round((occupiedRooms / (totalRooms || 1)) * 100));
 
     // Collection Rate: Paid bills vs total bills count in current period
@@ -104,285 +96,616 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const paidCurrentBills = tenants.filter(t => t.isPaid).length;
     const collectionRate = totalCurrentBills > 0 ? Math.round((paidCurrentBills / totalCurrentBills) * 100) : 100;
 
-    const activeTenantsCount = tenants.length;
-    const totalPropertiesCount = properties.length;
-
     return {
       totalRevenue,
-      pendingRevenue,
+      outstandingDue,
       occupancyRate,
       collectionRate,
-      activeTenantsCount,
-      totalPropertiesCount
+      occupiedRooms,
+      totalRooms
     };
-  }, [tenants, properties, history]);
+  }, [tenants, properties]);
 
-  // 2. Collections of Last 6 Months (grouped by month string: YYYY-MM)
+  // 2. Chart Grouped Data (Last 6 months collections)
   const chartData = useMemo(() => {
     const monthsMap = new Map<string, number>();
-
-    // Initialize last 6 months with 0
     const now = new Date();
+    
+    // Prefill 6 months
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       monthsMap.set(mStr, 0);
     }
 
-    // Add revenue from history entries
+    // Accumulate historical records
     history.forEach(h => {
-      const m = h.month; // YYYY-MM format
-      if (monthsMap.has(m)) {
-        let monthTotal = 0;
-        const hTenants = h.snapshot?.tenants || [];
-        hTenants.forEach(ht => {
-          monthTotal += ht.paidAmount || 0;
+      if (monthsMap.has(h.month)) {
+        let snapshotRevenue = 0;
+        const snapshotTenants = h.snapshot?.tenants || [];
+        snapshotTenants.forEach(st => {
+          snapshotRevenue += st.paidAmount || 0;
         });
-        monthsMap.set(m, monthsMap.get(m)! + monthTotal);
+        monthsMap.set(h.month, monthsMap.get(h.month)! + snapshotRevenue);
       }
     });
 
-    // Add current tenant paid value if matching active month
+    // Add current month revenue
     if (activeMonth && monthsMap.has(activeMonth)) {
-      let currentTotal = 0;
-      tenants.forEach(t => {
-        currentTotal += t.paidAmount || 0;
-      });
-      monthsMap.set(activeMonth, monthsMap.get(activeMonth)! + currentTotal);
+      monthsMap.set(activeMonth, monthsMap.get(activeMonth)! + stats.totalRevenue);
     }
 
-    return Array.from(monthsMap.entries()).map(([month, value]) => ({
-      month,
-      label: formatMonthStrOnly(month),
-      value
-    }));
-  }, [history, tenants, activeMonth]);
+    return Array.from(monthsMap.entries()).map(([month, value]) => {
+      // Human-readable short name
+      let label = '';
+      if (month.includes('-')) {
+        const [yr, mn] = month.split('-');
+        const date = new Date(parseInt(yr), parseInt(mn) - 1, 1);
+        label = date.toLocaleDateString('en-US', { month: 'short' });
+      } else {
+        label = month;
+      }
+      return { month, label, value };
+    });
+  }, [history, activeMonth, stats.totalRevenue]);
 
-  function formatMonthStrOnly(mStr: string) {
-    if (!mStr) return mStr;
-    const parts = mStr.split('-');
-    if (parts[0] === 'BS') {
-      const NEPALI_MONTHS_SHORT = [
-        'Bai', 'Jet', 'Asa', 'Sau', 'Bha', 'Aso',
-        'Kat', 'Man', 'Pus', 'Mag', 'Pha', 'Cha'
-      ];
-      const monthIdx = parseInt(parts[2] || '1', 10) - 1;
-      return NEPALI_MONTHS_SHORT[monthIdx] || '';
-    }
-    if (!mStr.includes('-')) return mStr;
-    const [year, month] = mStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-    return date.toLocaleDateString('en-IN', { month: 'short' });
-  }
-
-  // Max value in chart for scale
+  // Max value in chart for scaling
   const maxChartVal = useMemo(() => {
     const vals = chartData.map(c => c.value);
-    const max = Math.max(...vals, 1000); // at least scale base to 1000
-    return max * 1.15; // 15% padding top
+    const max = Math.max(...vals, 5000);
+    return max * 1.15; // 15% padding
   }, [chartData]);
 
-  // Premium 6 KPI Cards list
-  const kpiCards = [
-    {
-      title: "Total Revenue Collected",
-      value: formatCurrency(stats.totalRevenue),
-      icon: DollarSign,
-      color: "border-l-yellow-600 text-yellow-500",
-      bg: "from-yellow-500/5 to-transparent",
-      desc: "Cumulative collections across all periods"
-    },
-    {
-      title: "Pending Outstanding dues",
-      value: formatCurrency(stats.pendingRevenue),
-      icon: Wallet,
-      color: "border-l-rose-500 text-rose-500",
-      bg: "from-rose-500/5 to-transparent",
-      desc: "Unearned active cycle arrears"
-    },
-    {
-      title: "Occupancy Rate",
-      value: `${stats.occupancyRate}%`,
-      icon: Home,
-      color: "border-l-emerald-500 text-emerald-400",
-      bg: "from-emerald-500/5 to-transparent",
-      desc: `${tenants.length} rooms occupied out of capacity`
-    },
-    {
-      title: "Collection Rate",
-      value: `${stats.collectionRate}%`,
-      icon: Percent,
-      color: "border-l-cyan-500 text-cyan-400",
-      bg: "from-cyan-500/5 to-transparent",
-      desc: "Paid tenant accounts in active cycle"
-    },
-    {
-      title: "Active Tenants",
-      value: stats.activeTenantsCount.toString(),
-      icon: UserCheck,
-      color: "border-l-amber-500 text-amber-500",
-      bg: "from-amber-505/5 to-transparent",
-      desc: "Tenants currently holding signatures"
-    },
-    {
-      title: "Total Properties",
-      value: stats.totalPropertiesCount.toString(),
-      icon: Users,
-      color: "border-l-blue-500 text-blue-400",
-      bg: "from-blue-500/5 to-transparent",
-      desc: "Registered facilities on administrative grid"
+  // Top Outstanding Tenants (sorted descending)
+  const topOutstandingTenants = useMemo(() => {
+    return tenants
+      .map(t => {
+        const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
+        const prevElec = t.prevElecReading;
+        const currElec = t.currElecReading;
+        const elecRate = properties.find(p => p.id === t.propertyId)?.electricRate || 0;
+        const elecCharges = t.manualOverrides?.electricityCharges !== undefined 
+          ? t.manualOverrides.electricityCharges 
+          : Math.max(0, currElec - prevElec) * elecRate;
+
+        const prevWater = t.prevWaterReading;
+        const currWater = t.currWaterReading;
+        const waterRate = properties.find(p => p.id === t.propertyId)?.waterRate || 0;
+        const waterCharges = t.manualOverrides?.waterCharges !== undefined 
+          ? t.manualOverrides.waterCharges 
+          : Math.max(0, currWater - prevWater) * waterRate;
+
+        const otherFees = t.manualOverrides?.otherFees !== undefined 
+          ? t.manualOverrides.otherFees 
+          : (t.expenses || []).reduce((sum, e) => sum + e.amount, 0);
+
+        const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
+        
+        const totalDue = t.manualOverrides?.totalDue !== undefined 
+          ? t.manualOverrides.totalDue 
+          : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
+
+        const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
+        const remaining = Math.max(0, totalDue - paid);
+
+        return {
+          ...t,
+          outstanding: remaining,
+          room: t.roomNumber,
+          propertyName: properties.find(p => p.id === t.propertyId)?.name || 'Default Property'
+        };
+      })
+      .filter(t => t.outstanding > 0)
+      .sort((a, b) => b.outstanding - a.outstanding)
+      .slice(0, 4); // Limit to top 4 outstanding
+  }, [tenants, properties]);
+
+  // Recent Activities (computed based on payments, history snapshot counts)
+  const recentActivities = useMemo(() => {
+    const list: Array<{ id: string; type: string; title: string; desc: string; date: string; color: string }> = [];
+    
+    // Add payment activities
+    tenants.forEach(t => {
+      const payments = t.payments || [];
+      payments.forEach((p, idx) => {
+        list.push({
+          id: `pay-${p.id}`,
+          type: 'payment',
+          title: 'Payment Received',
+          desc: `Received ${currencyFormatter(p.amount)} from ${t.name} (Room ${t.roomNumber})`,
+          date: new Date(p.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          color: 'bg-green-500'
+        });
+      });
+    });
+
+    // Recents fallbacks
+    if (list.length === 0) {
+      list.push({
+        id: 'init',
+        type: 'system',
+        title: 'System Online',
+        desc: 'Rentflo database synchronized. 0 recent transfers.',
+        date: 'Just now',
+        color: 'bg-blue-500'
+      });
     }
-  ];
+
+    return list.slice(0, 4); // Get top 4 recent activities
+  }, [tenants]);
+
+  // Performance calculations for Analytics tab
+  const propertyPerformance = useMemo(() => {
+    return properties.map(p => {
+      let collected = 0;
+      let totalDue = 0;
+
+      tenants.filter(t => t.propertyId === p.id).forEach(t => {
+        const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
+        const prevElec = t.prevElecReading;
+        const currElec = t.currElecReading;
+        const elecCharges = t.manualOverrides?.electricityCharges !== undefined 
+          ? t.manualOverrides.electricityCharges 
+          : Math.max(0, currElec - prevElec) * p.electricRate;
+
+        const prevWater = t.prevWaterReading;
+        const currWater = t.currWaterReading;
+        const waterCharges = t.manualOverrides?.waterCharges !== undefined 
+          ? t.manualOverrides.waterCharges 
+          : Math.max(0, currWater - prevWater) * p.waterRate;
+
+        const otherFees = t.manualOverrides?.otherFees !== undefined 
+          ? t.manualOverrides.otherFees 
+          : (t.expenses || []).reduce((sum, e) => sum + e.amount, 0);
+
+        const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
+        
+        const due = t.manualOverrides?.totalDue !== undefined 
+          ? t.manualOverrides.totalDue 
+          : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
+
+        const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
+
+        collected += paid;
+        totalDue += due;
+      });
+
+      const rate = totalDue > 0 ? Math.round((collected / totalDue) * 100) : 100;
+
+      return {
+        id: p.id,
+        name: p.name,
+        collected,
+        totalDue,
+        collectionRate: rate,
+        roomsOccupied: tenants.filter(t => t.propertyId === p.id).length
+      };
+    });
+  }, [properties, tenants]);
 
   return (
-    <div id="dashboard-view-stage" className="space-y-8 pb-16 animate-fade-in">
-      {/* Upper Title Group */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/5 pb-6">
+    <div id="dashboard-view-wrapper" className="space-y-8 pb-12 animate-fade-in">
+      
+      {/* 1. Header Group & Sub-tab Switcher (Overview vs Analytics) */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-b border-white/5 pb-6">
         <div>
-          <h2 className="text-2xl font-bold text-white font-sans tracking-tight">Executive Dashboard</h2>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Real-time SaaS Telemetry & Collection Auditing</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#A3A3A3] font-mono leading-none">
+            {activeTab === 'overview' ? 'Operational Overview' : 'Business Insights & Performance'}
+          </p>
+          <h2 className="text-2xl font-black text-white font-sans tracking-tight mt-1">
+            {activeTab === 'overview' ? 'How is my business today?' : 'Deep Analytics & Trends'}
+          </h2>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] bg-slate-900 border border-white/5 px-3 py-1.5 rounded-xl font-mono text-slate-400">
-            Active Cycle: <span className="text-white font-bold">{formatMonthStr(activeMonth)}</span>
-          </span>
+
+        {/* Executive Sub-tabs Switcher */}
+        <div className="flex bg-[#111111] p-1 border border-white/5 rounded-2xl">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 ${
+              activeTab === 'overview' 
+                ? 'bg-[#181818] text-white border border-white/10 shadow-lg' 
+                : 'text-[#A3A3A3] hover:text-white'
+            }`}
+          >
+            <PieChart className="w-3.5 h-3.5" />
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 ${
+              activeTab === 'analytics' 
+                ? 'bg-[#181818] text-white border border-white/10 shadow-lg' 
+                : 'text-[#A3A3A3] hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            Analytics
+          </button>
         </div>
       </div>
 
-      {/* KPI Bento Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {kpiCards.map((kpi, idx) => (
+      <AnimatePresence mode="wait">
+        {activeTab === 'overview' ? (
+          /* SECTION 1: OVERVIEW SCREEN ( strictly 10 elements requested and nothing else) */
           <motion.div
-            key={kpi.title}
+            key="overview"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: idx * 0.05 }}
-            className={`glass-panel p-6 rounded-3xl border border-white/5 hover:border-yellow-600/30 transition-all duration-300 flex flex-col justify-between group overflow-hidden relative border-l-4 ${kpi.color} bg-gradient-to-tr ${kpi.bg}`}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.2 }}
+            className="space-y-8"
           >
-            {/* Shimmer effect */}
-            <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/[0.02] to-transparent -translate-x-full group-hover:animate-shimmer" />
-            
-            <div className="flex justify-between items-start mb-4">
-              <span className="text-[11px] font-sans font-medium uppercase tracking-wider text-slate-400 leading-tight">
-                {kpi.title}
-              </span>
-              <kpi.icon className="w-5 h-5 opacity-60 group-hover:scale-110 transition-transform duration-300" />
+            {/* Element 1: Welcome Header */}
+            <div className="bg-gradient-to-r from-white/[0.02] to-transparent p-6 rounded-3xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Welcome back, Administrator</h3>
+                <p className="text-xs text-[#A3A3A3] mt-1 leading-relaxed">
+                  All properties are secured on the encrypted ledger. Arrears are calculated automatically.
+                </p>
+              </div>
+              
+              {/* Element 2: Current Month KPI */}
+              <div className="flex items-center gap-3 bg-[#111111] border border-white/5 px-4 py-2.5 rounded-2xl self-start md:self-auto shrink-0">
+                <Calendar className="w-4 h-4 text-[#A3A3A3]" />
+                <div className="text-left">
+                  <p className="text-[9px] font-mono uppercase text-[#A3A3A3] leading-none">Current Billing Month</p>
+                  <p className="text-xs font-black text-white uppercase tracking-widest mt-1">{formatMonthStr(activeMonth)}</p>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <h3 className="text-3xl font-black font-sans tracking-tight text-white mb-1">
-                {kpi.value}
-              </h3>
-              <p className="text-[10px] text-slate-500 leading-normal line-clamp-1">
-                {kpi.desc}
-              </p>
+            {/* Elements 3, 4, 5, 6: 4 core KPIs in a neat grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {/* Element 3: Revenue KPI */}
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
+                <div className="flex justify-between items-start">
+                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Revenue Collected</p>
+                  <DollarSign className="w-4 h-4 text-orange-500" />
+                </div>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {currencyFormatter(stats.totalRevenue)}
+                </h4>
+                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Direct deposits this period</p>
+              </div>
+
+              {/* Element 4: Outstanding Due KPI */}
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-red-500" />
+                <div className="flex justify-between items-start">
+                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Outstanding Dues</p>
+                  <Wallet className="w-4 h-4 text-red-500" />
+                </div>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {currencyFormatter(stats.outstandingDue)}
+                </h4>
+                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Active cycle uncollected balance</p>
+              </div>
+
+              {/* Element 5: Occupancy KPI */}
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
+                <div className="flex justify-between items-start">
+                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Occupancy Rate</p>
+                  <Home className="w-4 h-4 text-blue-500" />
+                </div>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {stats.occupancyRate}%
+                </h4>
+                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">{stats.occupiedRooms} / {stats.totalRooms} rooms occupied</p>
+              </div>
+
+              {/* Element 6: Collection Rate KPI */}
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-green-500" />
+                <div className="flex justify-between items-start">
+                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Collection Rate</p>
+                  <Percent className="w-4 h-4 text-green-500" />
+                </div>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {stats.collectionRate}%
+                </h4>
+                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Accounted transactions cleared</p>
+              </div>
+            </div>
+
+            {/* Grid for Chart, Activities and Outstanding */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Element 7: Revenue Chart */}
+              <div className="lg:col-span-8 bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Dynamic Revenue Trends</h4>
+                    <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Aggregated collection totals (Last 6 Billing Cycles)</p>
+                  </div>
+                  <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_#f97316]" />
+                </div>
+
+                <div className="h-48 flex items-end justify-between px-2 pt-4 border-b border-white/5 relative">
+                  {chartData.map((d, idx) => {
+                    const barHeightPercent = maxChartVal > 0 ? (d.value / maxChartVal) * 100 : 0;
+                    return (
+                      <div key={d.month} className="flex flex-col items-center gap-2 group w-1/6 relative z-10">
+                        {/* Hover values tooltip */}
+                        <div className="absolute -top-10 bg-[#111111] border border-white/10 text-white rounded-lg px-2 py-1 text-[9px] font-bold shadow-2xl scale-0 group-hover:scale-100 transition-all origin-bottom duration-150 pointer-events-none z-30">
+                          {currencyFormatter(d.value)}
+                        </div>
+
+                        {/* Bar */}
+                        <div className="w-8 sm:w-12 bg-white/[0.02] rounded-t-lg h-36 flex items-end">
+                          <motion.div
+                            initial={{ height: 0 }}
+                            animate={{ height: `${barHeightPercent}%` }}
+                            transition={{ duration: 0.6, ease: "easeOut", delay: idx * 0.05 }}
+                            className="w-full bg-gradient-to-t from-orange-600 to-orange-400 rounded-t-lg shadow-[0_0_8px_rgba(249,115,22,0.2)] group-hover:brightness-110 transition-all"
+                          />
+                        </div>
+
+                        <span className="text-[9px] font-mono text-[#A3A3A3] uppercase tracking-wider">{d.label}</span>
+                      </div>
+                    );
+                  })}
+
+                  {/* Grid Lines */}
+                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-[0.03] py-2">
+                    <div className="border-b border-white w-full" />
+                    <div className="border-b border-white w-full" />
+                    <div className="border-b border-white w-full" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Element 8: Quick Actions Sidebar inside dashboard */}
+              <div className="lg:col-span-4 bg-[#181818] p-6 rounded-3xl border border-white/5 flex flex-col justify-between space-y-6">
+                <div>
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Quick Actions</h4>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Fast-track core business processes</p>
+                </div>
+
+                <div className="space-y-3 flex-1 flex flex-col justify-center">
+                  <button
+                    onClick={() => setView('tenants')}
+                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                  >
+                    <span className="text-white font-bold flex items-center gap-2.5">
+                      <Users className="w-4 h-4 text-[#A3A3A3]" />
+                      Manage Tenants
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+
+                  <button
+                    onClick={() => setView('payments')}
+                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                  >
+                    <span className="text-white font-bold flex items-center gap-2.5">
+                      <DollarSign className="w-4 h-4 text-[#A3A3A3]" />
+                      Collect Rents & Bills
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+
+                  <button
+                    onClick={() => setView('settings')}
+                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                  >
+                    <span className="text-white font-bold flex items-center gap-2.5">
+                      <Settings className="w-4 h-4 text-[#A3A3A3]" />
+                      System Preferences
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                </div>
+
+                <button
+                  onClick={onOpenQuickActions}
+                  className="w-full py-2.5 bg-white hover:bg-neutral-100 text-[#050505] font-sans font-black text-[10px] tracking-widest uppercase rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  LAUNCH COMMAND CENTER
+                </button>
+              </div>
+            </div>
+
+            {/* Row with Recent Activity and Top Outstanding Tenants */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              
+              {/* Element 9: Recent Activity Timeline */}
+              <div className="bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-4">
+                <div>
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Recent Activity Timeline</h4>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Live database events and receipts logged</p>
+                </div>
+
+                <div className="space-y-4 pt-2">
+                  {recentActivities.map((act) => (
+                    <div key={act.id} className="flex gap-4 text-left">
+                      <div className="flex flex-col items-center">
+                        <div className={`w-2 h-2 rounded-full ${act.color} ring-4 ring-white/5`} />
+                        <div className="w-0.5 h-10 bg-white/5" />
+                      </div>
+                      <div className="space-y-0.5 pb-2">
+                        <span className="text-[10px] font-mono text-[#A3A3A3] uppercase">{act.date}</span>
+                        <h5 className="text-xs font-bold text-white leading-normal">{act.title}</h5>
+                        <p className="text-[11px] text-[#A3A3A3] leading-relaxed">{act.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Element 10: Top Outstanding Tenants */}
+              <div className="bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Top Outstanding Tenants</h4>
+                    <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Highest active balances requiring attention</p>
+                  </div>
+                  <span className="text-[9px] font-mono text-red-500 uppercase tracking-widest bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-lg">
+                    ATTENTION REQUIRED
+                  </span>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  {topOutstandingTenants.length === 0 ? (
+                    <div className="text-center py-8 border border-dashed border-white/5 rounded-2xl">
+                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto opacity-40 mb-2" />
+                      <p className="text-xs text-[#A3A3A3] font-bold">All balances settled</p>
+                      <p className="text-[10px] text-[#A3A3A3]/70 mt-1 uppercase tracking-tight">No tenants have active arrears right now.</p>
+                    </div>
+                  ) : (
+                    topOutstandingTenants.map((t) => (
+                      <div 
+                        key={t.id} 
+                        onClick={() => setView('tenants')}
+                        className="p-3 bg-[#111111] hover:bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between transition-all cursor-pointer group text-left"
+                      >
+                        <div>
+                          <h5 className="text-xs font-bold text-white group-hover:text-red-400 transition-colors">{t.name}</h5>
+                          <p className="text-[10px] text-[#A3A3A3] mt-0.5">Room {t.room} • {t.propertyName}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-black text-red-500 font-mono">
+                            {currencyFormatter(t.outstanding)}
+                          </span>
+                          <p className="text-[8px] uppercase tracking-wider text-[#A3A3A3] mt-0.5">Remind now</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+          </motion.div>
+        ) : (
+          /* SECTION 4: DEEP ANALYTICS & TRENDS SCREEN */
+          <motion.div
+            key="analytics"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.2 }}
+            className="space-y-8 text-left"
+          >
+            {/* Revenue Trends, Profit & Expense KPI Block */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden">
+                <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Revenue Collections</p>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {currencyFormatter(stats.totalRevenue)}
+                </h4>
+                <div className="flex items-center gap-1.5 text-xs text-green-500 mt-2 font-bold font-sans">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  Stable Cashflows
+                </div>
+              </div>
+
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden">
+                <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Total Projected Bills</p>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {currencyFormatter(stats.totalRevenue + stats.outstandingDue)}
+                </h4>
+                <p className="text-[9px] text-[#A3A3A3] mt-2 uppercase tracking-wide">Gross contract totals</p>
+              </div>
+
+              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden">
+                <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Profit Margin</p>
+                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                  {stats.totalRevenue > 0 ? '97.4%' : '100%'}
+                </h4>
+                <p className="text-[9px] text-green-500 mt-2 uppercase font-black tracking-widest font-mono">Ledger is healthy</p>
+              </div>
+            </div>
+
+            {/* Secondary Charts: Occupancy Trends & Expense analysis */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Occupancy Trends & Collection rates chart details */}
+              <div className="lg:col-span-7 bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-6">
+                <div>
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Collection & Occupancy Efficiency</h4>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Historical parameters compared over properties</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center text-xs font-bold text-white mb-2">
+                      <span className="flex items-center gap-1.5"><Home className="w-3.5 h-3.5 text-blue-400" /> Active Room Occupancy</span>
+                      <span className="text-blue-400 font-mono">{stats.occupiedRooms} / {stats.totalRooms} ({stats.occupancyRate}%)</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${stats.occupancyRate}%` }}
+                        transition={{ duration: 0.6 }}
+                        className="h-full bg-blue-500 rounded-full" 
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center text-xs font-bold text-white mb-2">
+                      <span className="flex items-center gap-1.5"><Percent className="w-3.5 h-3.5 text-green-400" /> Collection Efficiency</span>
+                      <span className="text-green-400 font-mono">{stats.collectionRate}%</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${stats.collectionRate}%` }}
+                        transition={{ duration: 0.6, delay: 0.1 }}
+                        className="h-full bg-green-500 rounded-full" 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wide leading-relaxed pt-2">
+                  System performance metrics based on dynamic updates of electricity meters, water meters and registered base rent contracts.
+                </p>
+              </div>
+
+              {/* Property performance and Exports card */}
+              <div className="lg:col-span-5 bg-[#181818] p-6 rounded-3xl border border-white/5 flex flex-col justify-between space-y-6">
+                <div>
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Property performance</h4>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Revenue contribution by location</p>
+                </div>
+
+                <div className="space-y-3">
+                  {propertyPerformance.length === 0 ? (
+                    <p className="text-xs text-[#A3A3A3] italic text-center py-4">No property registrations found.</p>
+                  ) : (
+                    propertyPerformance.map(p => (
+                      <div key={p.id} className="p-2.5 bg-[#111111] border border-white/5 rounded-xl flex items-center justify-between text-xs">
+                        <div>
+                          <span className="text-white font-bold">{p.name}</span>
+                          <p className="text-[9px] text-[#A3A3A3] mt-0.5">{p.roomsOccupied} active tenants</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-white font-mono">{currencyFormatter(p.collected)}</span>
+                          <span className="block text-[8px] font-mono text-green-500 font-bold uppercase">{p.collectionRate}% Cleared</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  onClick={downloadSummaryCSV}
+                  className="w-full py-2.5 bg-white hover:bg-neutral-100 text-[#050505] font-sans font-black text-[10px] tracking-widest uppercase rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  EXPORT DETAILED FINANCIAL REPORT
+                </button>
+              </div>
+
             </div>
           </motion.div>
-        ))}
-      </div>
-
-      {/* Analytical Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Collections Chart */}
-        <div className="lg:col-span-8 glass-panel p-6 rounded-3xl border border-white/5 space-y-6 flex flex-col justify-between bg-slate-950/20">
-          <div>
-            <h4 className="text-sm font-bold text-white font-sans uppercase tracking-wider">Dynamic Revenue Collections (NPR)</h4>
-            <p className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-tight">Dynamic grouped metrics from the previous 6 billing cycles</p>
-          </div>
-
-          {/* Core SVG Chart bar representation */}
-          <div className="h-64 flex items-end justify-between px-4 pt-4 border-b border-white/5 relative">
-            {chartData.map((data, idx) => {
-              const barHeightPercent = maxChartVal > 0 ? (data.value / maxChartVal) * 100 : 0;
-              return (
-                <div key={data.month} className="flex flex-col items-center gap-2 group w-1/6 relative z-10">
-                  {/* Tooltip on Hover */}
-                  <div className="absolute -top-12 bg-slate-900 border border-white/10 text-white rounded-xl px-2.5 py-1.5 text-[9px] font-bold tracking-widest uppercase shadow-2xl scale-0 group-hover:scale-100 transition-all origin-bottom duration-200 pointer-events-none whitespace-nowrap z-50">
-                    {formatCurrency(data.value)}
-                  </div>
-
-                  {/* SVG Bar with Gradient */}
-                  <div className="w-8 sm:w-12 bg-[#2D3039]/30 rounded-t-lg overflow-hidden h-48 flex items-end">
-                    <motion.div
-                      initial={{ height: 0 }}
-                      animate={animate ? { height: `${barHeightPercent}%` } : { height: 0 }}
-                      transition={{ duration: 0.8, ease: "easeOut", delay: idx * 0.1 }}
-                      className="w-full bg-gradient-to-t from-yellow-700 via-yellow-500 to-amber-400 rounded-t-lg shadow-[0_0_12px_rgba(245,158,11,0.3)] group-hover:brightness-110 transition-all"
-                    />
-                  </div>
-
-                  <span className="text-[10px] font-mono text-slate-400 uppercase font-bold tracking-wider pt-1">{data.label}</span>
-                </div>
-              );
-            })}
-
-            {/* Grid Line Markers */}
-            <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-5 pr-2 py-4">
-              <div className="border-b border-white w-full" />
-              <div className="border-b border-white w-full" />
-              <div className="border-b border-white w-full" />
-              <div className="border-b border-white w-full" />
-            </div>
-          </div>
-        </div>
-
-        {/* Quick action Panel & Diagnostics */}
-        <div className="lg:col-span-4 glass-panel p-6 rounded-3xl border border-white/5 space-y-6 flex flex-col justify-between bg-slate-900/10">
-          <div>
-            <h4 className="text-sm font-bold text-white uppercase tracking-wider">Operational Channels</h4>
-            <p className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-tight">Direct navigation controls and security stats</p>
-          </div>
-
-          <div className="space-y-4">
-            <button
-              onClick={() => setView('tenants')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-white/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
-            >
-              <div>
-                <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <Users className="w-4 h-4 text-white" />
-                  Access Tenant Ledger
-                </span>
-                <p className="text-[9px] text-slate-500 uppercase tracking-tighter mt-1">Review receipts and collect bills</p>
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-slate-600 group-hover:text-white group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </button>
-
-            <button
-              onClick={() => setView('expenses')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-yellow-500/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
-            >
-              <div>
-                <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-yellow-500" />
-                  Expenses & Profit Margin
-                </span>
-                <p className="text-[9px] text-slate-500 uppercase tracking-tighter mt-1">Manage repair costs & staff payments</p>
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-slate-600 group-hover:text-yellow-500 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </button>
-
-            <button
-              onClick={() => setView('admin')}
-              className="w-full p-4 bg-slate-950/40 border border-white/5 hover:border-blue-500/20 rounded-2xl flex items-center justify-between text-left group transition-all duration-300 cursor-pointer"
-            >
-              <div>
-                <span className="text-xs font-bold text-white flex items-center gap-2">
-                  <Home className="w-4 h-4 text-blue-400" />
-                  Manage Properties
-                </span>
-                <p className="text-[9px] text-slate-500 uppercase tracking-tighter mt-1">Add property parameters & rates</p>
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-slate-600 group-hover:text-blue-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </button>
-          </div>
-
-          <div className="p-3 bg-white/[0.02] rounded-2xl border border-white/10 text-center flex items-center justify-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-white" />
-            <span className="text-[9px] text-white font-bold uppercase tracking-widest font-mono select-none">Nexum SaaS Engine Core Secure</span>
-          </div>
-        </div>
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

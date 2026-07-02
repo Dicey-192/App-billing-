@@ -16,6 +16,9 @@ import html2canvas from 'html2canvas';
 import NepaliDate from 'nepali-date-converter';
 import { LoginScreen } from './components/LoginScreen';
 import { DashboardView } from './components/DashboardView';
+import { TenantsView } from './components/TenantsView';
+import { PaymentsView } from './components/PaymentsView';
+import { SettingsView } from './components/SettingsView';
 import { db, AuditDB } from './lib/db';
 import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
@@ -116,21 +119,56 @@ const convertOklabToRgb = (oklabStr: string): string => {
   });
 };
 
+const stripUnsupportedFunctions = (cssText: string, funcNames: string[], fallback: string): string => {
+  let result = cssText;
+  for (const name of funcNames) {
+    const searchStr = name + '(';
+    let index = result.indexOf(searchStr);
+    while (index !== -1) {
+      let depth = 1;
+      let i = index + searchStr.length;
+      while (i < result.length && depth > 0) {
+        if (result[i] === '(') {
+          depth++;
+        } else if (result[i] === ')') {
+          depth--;
+        }
+        i++;
+      }
+      if (depth === 0) {
+        result = result.substring(0, index) + fallback + result.substring(i);
+      } else {
+        break;
+      }
+      index = result.indexOf(searchStr);
+    }
+  }
+  return result;
+};
+
 const cleanModernColors = (text: string): string => {
   if (!text) return text;
   let temp = text;
+  
+  // Replace nested var(...) expressions inside modern color functions with a fallback '1'
+  try {
+    temp = temp.replace(/(oklch|oklab|lab|lch)\(([^()]*|\([^()]*\))*\)/gi, (match) => {
+      return match.replace(/var\([^()]*\)/gi, '1');
+    });
+  } catch (err) {
+    console.error('Error pre-processing nested vars:', err);
+  }
+
   if (/oklch/i.test(temp)) {
     temp = convertOklchToRgb(temp);
   }
   if (/oklab/i.test(temp)) {
     temp = convertOklabToRgb(temp);
   }
-  if (/lab\(/i.test(temp)) {
-    temp = temp.replace(/lab\([^)]+\)/gi, 'rgb(128,128,128)');
-  }
-  if (/lch\(/i.test(temp)) {
-    temp = temp.replace(/lch\([^)]+\)/gi, 'rgb(128,128,128)');
-  }
+  
+  // Safely strip any unsupported color functions to standard rgb/rgba/gray fallbacks
+  temp = stripUnsupportedFunctions(temp, ['oklch', 'oklab', 'lab', 'lch', 'color-mix'], 'rgb(128, 128, 128)');
+  
   return temp;
 };
 
@@ -163,10 +201,6 @@ const safeHtml2Canvas = async (element: HTMLElement, options: any) => {
     });
   };
 
-  const originalNodes: Array<{ node: HTMLStyleElement | HTMLLinkElement; parent: Node; nextSibling: Node | null }> = [];
-  const styleAndLinkElements = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]')) as Array<HTMLStyleElement | HTMLLinkElement>;
-  const tempStyles: HTMLStyleElement[] = [];
-
   let combinedCss = '';
 
   const processStyleSheet = (sheet: CSSStyleSheet) => {
@@ -192,45 +226,63 @@ const safeHtml2Canvas = async (element: HTMLElement, options: any) => {
     processStyleSheet(sheet);
   }
 
-  // 2. Detach original styles from DOM entirely so html2canvas's own stylesheet scanner never reads them
-  for (const el of styleAndLinkElements) {
-    if (el.parentNode) {
-      originalNodes.push({
-        node: el,
-        parent: el.parentNode,
-        nextSibling: el.nextSibling
-      });
-      el.parentNode.removeChild(el);
-    }
-  }
-
-  // 3. Inject our temporary cleaned Stylesheet
+  // 2. Inject our temporary cleaned Stylesheet
   const sanitizedCss = cleanModernColors(combinedCss);
   const tempStyle = document.createElement('style');
   tempStyle.id = 'temp-clean-css-rules';
   tempStyle.textContent = sanitizedCss;
   document.head.appendChild(tempStyle);
-  tempStyles.push(tempStyle);
+
+  // 3. Redefine document.styleSheets to ONLY contain our sanitized sheet.
+  // This avoids detaching styles and preserves programmatically added CSSOM rules (like Vite/Tailwind inserts).
+  Object.defineProperty(document, 'styleSheets', {
+    get() {
+      return tempStyle.sheet ? [tempStyle.sheet] : [];
+    },
+    configurable: true
+  });
+
+  // 4. Temporarily force the element to render at top-left of viewport behind everything (z-index: -9999).
+  // This solves offscreen coordinates (-left-[4000px]) that cause black or cropped images.
+  const originalPosition = element.style.position;
+  const originalLeft = element.style.left;
+  const originalTop = element.style.top;
+  const originalZIndex = element.style.zIndex;
+  const originalVisibility = element.style.visibility;
+  const originalTransform = element.style.transform;
+  const originalMargin = element.style.margin;
+
+  element.style.setProperty('position', 'fixed', 'important');
+  element.style.setProperty('left', '0px', 'important');
+  element.style.setProperty('top', '0px', 'important');
+  element.style.setProperty('z-index', '-9999', 'important');
+  element.style.setProperty('visibility', 'visible', 'important');
+  element.style.setProperty('transform', 'none', 'important');
+  element.style.setProperty('margin', '0px', 'important');
 
   try {
-    const canvas = await html2canvas(element, options);
+    const canvas = await html2canvas(element, {
+      ...options,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: document.documentElement.offsetWidth,
+      windowHeight: document.documentElement.offsetHeight,
+    });
     return canvas;
   } finally {
-    // 4. Restore original window.getComputedStyle and stylesheet DOM nodes
+    // 5. Restore original window.getComputedStyle, document.styleSheets, and element styling
     window.getComputedStyle = originalGetComputedStyle;
 
-    for (const temp of tempStyles) {
-      temp.remove();
-    }
+    delete (document as any).styleSheets;
+    tempStyle.remove();
 
-    for (let i = originalNodes.length - 1; i >= 0; i--) {
-      const { node, parent, nextSibling } = originalNodes[i];
-      if (nextSibling) {
-        parent.insertBefore(node, nextSibling);
-      } else {
-        parent.appendChild(node);
-      }
-    }
+    element.style.position = originalPosition;
+    element.style.left = originalLeft;
+    element.style.top = originalTop;
+    element.style.zIndex = originalZIndex;
+    element.style.visibility = originalVisibility;
+    element.style.transform = originalTransform;
+    element.style.margin = originalMargin;
   }
 };
 
@@ -283,6 +335,232 @@ export default function App() {
   const [isBulkSending, setIsBulkSending] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [processingId, setProcessingId] = useState<string | null>(null);
+
+  const downloadReceipt = async (tenant: any) => {
+    setProcessingId(tenant.id);
+    console.log(`Starting download for ${tenant.name}`);
+    try {
+      const element = document.getElementById(`receipt-${tenant.id}`);
+      if (!element) throw new Error("Receipt element not found");
+      
+      const canvas = await safeHtml2Canvas(element, { 
+        scale: 2, 
+        useCORS: true, 
+        logging: true,
+        backgroundColor: '#020617' // Match template bg
+      });
+      const url = canvas.toDataURL("image/png");
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
+      link.click();
+    } catch (e) {
+      console.error("Download failed for tenant:", tenant.name, e);
+      alert(`Failed to generate receipt for ${tenant.name}. Check console for details.`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
+  const getReceiptIdHelper = (tenantId: string, monthName: string) => {
+    let hash = 0;
+    const str = tenantId + monthName;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash % 90000) + 10000;
+  };
+
+  function handleBulkPrint() {
+    const targets = selectedTenantIds && selectedTenantIds.size > 0 
+      ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
+      : tenants;
+    
+    if (targets.length === 0) {
+      alert("No receipts found to print.");
+      return;
+    }
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow || iframe.contentDocument;
+    if (!iframeDoc) {
+      alert("Failed to build printing frame.");
+      return;
+    }
+
+    let stylesAndFontsHead = '';
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.googleapis.com">\n`;
+    stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n`;
+    stylesAndFontsHead += `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">\n`;
+    
+    // Extract actual active CSS rules including programmatically injected CSSOM rules (like Vite/Tailwind inserts)
+    let combinedPrintCss = '';
+    const processPrintStyleSheet = (sheet: CSSStyleSheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (!rules) return;
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i];
+          if (rule instanceof CSSImportRule && rule.styleSheet) {
+            processPrintStyleSheet(rule.styleSheet);
+          } else if (rule.cssText) {
+            combinedPrintCss += rule.cssText + '\n';
+          }
+        }
+      } catch (e) {
+        // Ignore cross-origin stylesheet permission issues
+      }
+    };
+
+    const activeSheets = Array.from(document.styleSheets) as CSSStyleSheet[];
+    for (const sheet of activeSheets) {
+      processPrintStyleSheet(sheet);
+    }
+
+    const sanitizedPrintCss = cleanModernColors(combinedPrintCss);
+    stylesAndFontsHead += `<style>${sanitizedPrintCss}</style>\n`;
+
+    const receiptsPagesHTML = targets.map((tenant: any) => {
+      const element = document.getElementById(`receipt-${tenant.id}`);
+      if (!element) return '';
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.width = '100%';
+      clone.style.maxWidth = '800px';
+      clone.style.margin = '0 auto';
+      clone.style.boxShadow = 'none';
+      clone.style.border = '1px solid #CBD5E1';
+      clone.style.padding = '24px';
+      return `<div class="print-page receipt-page-wrapper" style="page-break-after: always; break-after: page; margin-bottom: 40px; background: #FFFFFF; padding: 20px;">
+        ${clone.outerHTML}
+      </div>`;
+    }).join('\n');
+
+    const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Print Receipts</title>
+  ${stylesAndFontsHead}
+  <style>
+    body {
+      background-color: #FFFFFF !important;
+      color: #0F172A !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .print-page {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+    @media print {
+      body {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+      }
+      .receipt-page-wrapper {
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: #FFFFFF !important;
+      }
+      .receipt-card {
+        border: none !important;
+        box-shadow: none !important;
+        background: #FFFFFF !important;
+        color: #0F172A !important;
+        padding: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${receiptsPagesHTML}
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+        setTimeout(function() {
+          window.frameElement.remove();
+        }, 1000);
+      }, 500);
+    };
+  </script>
+</body>
+</html>`;
+
+    const doc = (iframe.contentWindow?.document || (iframe.contentDocument as Document));
+    doc.open();
+    doc.write(printHTML);
+    doc.close();
+  }
+
+  async function handleBulkDownload() {
+    setBulkProcessing(true);
+    const zip = new JSZip();
+    const folder = zip.folder("receipts");
+    
+    try {
+      const targets = selectedTenantIds && selectedTenantIds.size > 0 
+        ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
+        : tenants;
+
+      if (targets.length === 0) {
+        alert("No receipts found to download.");
+        return;
+      }
+
+      for (const tenant of targets) {
+        const element = document.getElementById(`receipt-${tenant.id}`);
+        if (element) {
+          try {
+            // Render receipt element directly to Canvas with original style settings
+            const canvas = await safeHtml2Canvas(element, { 
+              scale: 2, 
+              useCORS: true, 
+              logging: false,
+              backgroundColor: '#020617' // Match original style background
+            });
+            
+            // Extract the blob of the image and append binary to ZIP file
+            const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+            if (blob) {
+              const arrayBuffer = await blob.arrayBuffer();
+              const cleanName = tenant.name.replace(/\s+/g, '_');
+              const dateStr = new Date().toISOString().split('T')[0];
+              const invoiceNum = getReceiptIdHelper(tenant.id, data.activeMonth || 'Current_Cycle');
+              const filename = `${cleanName}-${dateStr}-${invoiceNum}.png`;
+              folder?.file(filename, arrayBuffer);
+            }
+          } catch (itemErr) {
+            console.error(`Failed to snapshot receipt for ${tenant.name}`, itemErr);
+          }
+        } else {
+          console.warn(`Receipt element not found for ${tenant.name}, skipping PNG conversion.`);
+        }
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      saveAs(blob, `Rentflo_Receipts_${new Date().toISOString().split('T')[0]}.zip`);
+    } catch (e) {
+      console.error("Bulk download failed", e);
+      alert("Bulk download failed. Check console for details.");
+    } finally {
+      setBulkProcessing(false);
+    }
+  }
 
   // Google Auth & Drive States
   const [googleUser, setGoogleUser] = useState<any>(null);
@@ -1109,6 +1387,25 @@ export default function App() {
     );
   }
 
+  const handleFabClick = (view: ViewType) => {
+    switch (view) {
+      case 'dashboard':
+        setShowPalette(true);
+        break;
+      case 'tenants':
+        setTenantModal({ open: true, propertyId: properties[0]?.id });
+        break;
+      case 'payments':
+        setPaymentModal({ open: true });
+        break;
+      case 'settings':
+        setPropertyModal({ open: true });
+        break;
+      default:
+        break;
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-[#050505] text-[#F4F4F6] relative overflow-hidden selection:bg-white/20 select-none screen-container">
       {/* Background Mesh Gradients - Premium Subtle Luminous White Ambience */}
@@ -1197,7 +1494,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <Sidebar currentView={currentView} setView={setView} />
+      <Sidebar currentView={currentView} setView={setView} onFabClick={handleFabClick} />
       
       <main className="flex-1 flex flex-col p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full z-10">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-white/5">
@@ -1206,7 +1503,7 @@ export default function App() {
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">RENTFLO ADMINISTRATIVE COMMAND</p>
               <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider mt-1.5 flex items-center gap-3 font-sans">
-                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'tenants' ? 'Tenants Ledger' : 'Administrative Hub'}
+                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'tenants' ? 'Tenants Ledger' : currentView === 'payments' ? 'Payments Ledger' : 'Preferences & Setup'}
                 <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
               </h1>
             </div>
@@ -1418,24 +1715,38 @@ export default function App() {
                 recalculateBalances={recalculateBalances}
                 activeMonth={data.activeMonth}
                 calendarSystem={calendarSystem}
+                downloadReceipt={downloadReceipt}
+                handleBulkDownload={handleBulkDownload}
+                printAllReceipts={handleBulkPrint}
               />
             )}
-            {currentView === 'admin' && (
-              <AdministrativeHubView 
-                properties={properties} 
-                addProperty={addProperty} 
-                updateProperty={updateProperty} 
-                deleteProperty={handleDeleteProperty} 
+            {currentView === 'payments' && (
+              <PaymentsView
+                tenants={tenants}
+                properties={properties}
+                setPaymentModal={setPaymentModal}
+                updateTenant={updateTenant}
+                pushToUndo={pushToUndo}
+                activeMonth={data.activeMonth || ''}
+                downloadReceipt={downloadReceipt}
+              />
+            )}
+            {currentView === 'settings' && (
+              <SettingsView
+                properties={properties}
+                addProperty={addProperty}
+                updateProperty={updateProperty}
+                deleteProperty={handleDeleteProperty}
                 setPropertyModal={setPropertyModal}
-                history={history} 
+                history={history}
                 onShowDetail={(entry: any) => setHistoryModal({ open: true, data: entry })}
                 updateHistoryTenant={(eid: string, tid: string, up: any) => {
                   pushToUndo();
                   updateHistoryTenant(eid, tid, up);
                 }}
-                data={data} 
-                restoreData={restoreData} 
-                quotaUsage={quotaUsage} 
+                data={data}
+                restoreData={restoreData}
+                quotaUsage={quotaUsage}
                 cleanOldHistory={cleanOldHistory}
                 dataStats={dataStats}
                 recalculateBalances={recalculateBalances}
@@ -1451,8 +1762,6 @@ export default function App() {
                 isDriveRestoring={isDriveRestoring}
                 googleAuthError={googleAuthError}
                 setGoogleAuthError={setGoogleAuthError}
-                setGoogleToken={setGoogleToken}
-                setGoogleUser={setGoogleUser}
                 handleGoogleSignIn={handleGoogleSignIn}
                 handleGoogleLogout={handleGoogleLogout}
                 handleBackupToDrive={handleBackupToDrive}
@@ -1582,15 +1891,17 @@ export default function App() {
         onSave={handleBatchSave}
       />
 
-      {paymentModal.tenant && paymentModal.property && (
+      {paymentModal.open && (
         <PaymentModal
           isOpen={paymentModal.open}
           tenant={paymentModal.tenant}
           property={paymentModal.property}
+          tenants={tenants}
+          properties={properties}
           onClose={() => setPaymentModal({ open: false })}
-          onSave={(up) => {
+          onSave={(tenantId, up) => {
             pushToUndo();
-            updateTenant(paymentModal.tenant!.id, up);
+            updateTenant(tenantId, up);
           }}
         />
       )}
@@ -2109,7 +2420,7 @@ function LegacyDashboardPlaceholder({ data, setBatchModal, setBulkTableModal, pr
   );
 }
 
-function AdministrativeHubView({ 
+function _DeprecatedAdministrativeHubView({ 
   properties, addProperty, updateProperty, deleteProperty, setPropertyModal,
   history, onShowDetail, updateHistoryTenant,
   data, restoreData, quotaUsage, cleanOldHistory, dataStats, recalculateBalances, auditLogs, supportMasterOverrideMode, toggleSupportMasterMode, clearAuditLogs,
@@ -2168,7 +2479,7 @@ function AdministrativeHubView({
           transition={{ duration: 0.2 }}
         >
           {activeSubTab === 'properties' && (
-            <PropertiesView 
+            <_DeprecatedPropertiesView 
               properties={properties} 
               addProperty={addProperty} 
               updateProperty={updateProperty} 
@@ -2177,14 +2488,14 @@ function AdministrativeHubView({
             />
           )}
           {activeSubTab === 'history' && (
-            <HistoryView 
+            <_DeprecatedHistoryView 
               history={history} 
               onShowDetail={onShowDetail}
               updateHistoryTenant={updateHistoryTenant}
             />
           )}
           {activeSubTab === 'settings' && (
-            <SettingsView 
+            <_DeprecatedSettingsView 
               data={data} 
               restoreData={restoreData} 
               quotaUsage={quotaUsage} 
@@ -2222,7 +2533,7 @@ function AdministrativeHubView({
   );
 }
 
-function PropertiesView({ properties, addProperty, updateProperty, deleteProperty, setPropertyModal }: any) {
+function _DeprecatedPropertiesView({ properties, addProperty, updateProperty, deleteProperty, setPropertyModal }: any) {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b border-white/5 pb-4">
@@ -2296,7 +2607,7 @@ function PropertiesView({ properties, addProperty, updateProperty, deletePropert
   );
 }
 
-function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances, activeMonth, calendarSystem }: any) {
+function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSelectedPropertyId, searchQuery, setSearchQuery, statusFilter, setStatusFilter, updateTenant, deleteTenant, setTenantModal, downloadSummaryCSV, setBatchModal, setBulkTableModal, rolloverPrompt, setRolloverPrompt, setPaymentModal, pushToUndo, selectedTenantIds, setSelectedTenantIds, shareViaWhatsApp, handleBulkWhatsApp, isBulkSending, bulkProgress, processingId, setProcessingId, onOpenProfile, recalculateBalances, activeMonth, calendarSystem }: any) {
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   
@@ -2382,10 +2693,32 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n`;
     stylesAndFontsHead += `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">\n`;
     
-    const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
-    styleElements.forEach(s => {
-      stylesAndFontsHead += s.outerHTML + '\n';
-    });
+    // Extract actual active CSS rules including programmatically injected CSSOM rules (like Vite/Tailwind inserts)
+    let combinedSinglePrintCss = '';
+    const processSinglePrintStyleSheet = (sheet: CSSStyleSheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (!rules) return;
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i];
+          if (rule instanceof CSSImportRule && rule.styleSheet) {
+            processSinglePrintStyleSheet(rule.styleSheet);
+          } else if (rule.cssText) {
+            combinedSinglePrintCss += rule.cssText + '\n';
+          }
+        }
+      } catch (e) {
+        // Ignore cross-origin stylesheet permission issues
+      }
+    };
+
+    const activeSheetsForSingle = Array.from(document.styleSheets) as CSSStyleSheet[];
+    for (const sheet of activeSheetsForSingle) {
+      processSinglePrintStyleSheet(sheet);
+    }
+
+    const sanitizedSinglePrintCss = cleanModernColors(combinedSinglePrintCss);
+    stylesAndFontsHead += `<style>${sanitizedSinglePrintCss}</style>\n`;
 
     return `<!DOCTYPE html>
 <html>
@@ -2418,7 +2751,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
 </html>`;
   };
 
-  const handleBulkPrint = () => {
+  function handleBulkPrint() {
     const targets = selectedTenantIds && selectedTenantIds.size > 0 
       ? tenants.filter((t: any) => selectedTenantIds.has(t.id))
       : tenants;
@@ -2448,10 +2781,32 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     stylesAndFontsHead += `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n`;
     stylesAndFontsHead += `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">\n`;
     
-    const styleElements = document.querySelectorAll('style, link[rel="stylesheet"]');
-    styleElements.forEach(s => {
-      stylesAndFontsHead += s.outerHTML + '\n';
-    });
+    // Extract actual active CSS rules including programmatically injected CSSOM rules (like Vite/Tailwind inserts)
+    let combinedPrintCss = '';
+    const processPrintStyleSheet = (sheet: CSSStyleSheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (!rules) return;
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i];
+          if (rule instanceof CSSImportRule && rule.styleSheet) {
+            processPrintStyleSheet(rule.styleSheet);
+          } else if (rule.cssText) {
+            combinedPrintCss += rule.cssText + '\n';
+          }
+        }
+      } catch (e) {
+        // Ignore cross-origin stylesheet permission issues
+      }
+    };
+
+    const activeSheets = Array.from(document.styleSheets) as CSSStyleSheet[];
+    for (const sheet of activeSheets) {
+      processPrintStyleSheet(sheet);
+    }
+
+    const sanitizedPrintCss = cleanModernColors(combinedPrintCss);
+    stylesAndFontsHead += `<style>${sanitizedPrintCss}</style>\n`;
 
     const receiptsPagesHTML = targets.map((tenant: any) => {
       const element = document.getElementById(`receipt-${tenant.id}`);
@@ -2530,7 +2885,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
     doc.close();
   };
 
-  const handleBulkDownload = async () => {
+  async function handleBulkDownload() {
     setBulkProcessing(true);
     const zip = new JSZip();
     const folder = zip.folder("receipts");
@@ -3128,7 +3483,7 @@ function TenantsView({ tenants, properties, selectedPropertyId, setSelectedPrope
   );
 }
 
-function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
+function _DeprecatedHistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -3173,7 +3528,7 @@ function HistoryView({ history, onShowDetail, updateHistoryTenant }: any) {
   );
 }
 
-function SettingsView({ 
+function _DeprecatedSettingsView({ 
   data, 
   restoreData, 
   quotaUsage, 
