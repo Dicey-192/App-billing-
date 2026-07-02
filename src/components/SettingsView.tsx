@@ -101,6 +101,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  // Helper to parse and validate any Rentflo JSON backup payload
+  const parseAndValidateBackup = (rawObj: any) => {
+    let target = rawObj;
+    if (target && typeof target === 'object') {
+      if (target.payload && typeof target.payload === 'object') {
+        target = target.payload;
+      } else if (target.data && typeof target.data === 'object') {
+        target = target.data;
+      }
+    }
+    if (!target || typeof target !== 'object') {
+      throw new Error("Invalid backup: data is not an object");
+    }
+    if (!Array.isArray(target.properties) || !Array.isArray(target.tenants)) {
+      throw new Error("Invalid backup schema: missing properties or tenants list");
+    }
+    return target;
+  };
+
   // Handle local import file trigger
   const handleImportJSON = async () => {
     if (!jsonBackupString.trim()) {
@@ -108,20 +127,50 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
     try {
-      const parsed = JSON.parse(jsonBackupString.trim());
-      if (!parsed.properties || !parsed.tenants) {
-        throw new Error("Invalid backup schema");
-      }
-      const success = await restoreData(parsed);
-      if (success) {
-        showToast("Database restored successfully", "success");
-        setJsonBackupString('');
-      } else {
-        showToast("Failed to write data to IndexedDB", "error");
+      const rawParsed = JSON.parse(jsonBackupString.trim());
+      const validatedData = parseAndValidateBackup(rawParsed);
+      
+      if (confirm("Are you sure you want to restore data? This will overwrite your current database state with the backup contents.")) {
+        const success = await restoreData(validatedData);
+        if (success) {
+          showToast("Database restored successfully", "success");
+          setJsonBackupString('');
+        } else {
+          showToast("Failed to write data to IndexedDB", "error");
+        }
       }
     } catch (e) {
       alert("Import failed. Verify the copied JSON backup is standard Rentflo format.");
     }
+  };
+
+  // Handle local backup file upload
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const rawParsed = JSON.parse(text);
+        const validatedData = parseAndValidateBackup(rawParsed);
+
+        if (confirm("Are you sure you want to restore data from this file? This will overwrite your current database state with the backup contents.")) {
+          const success = await restoreData(validatedData);
+          if (success) {
+            showToast("Database restored successfully from file", "success");
+            setJsonBackupString('');
+          } else {
+            showToast("Failed to write data to IndexedDB", "error");
+          }
+        }
+      } catch (err) {
+        alert("Import failed. Please verify that this is a valid Rentflo JSON backup file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset file input so same file can be chosen again
   };
 
   return (
@@ -470,33 +519,56 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="p-5 bg-[#181818] border border-white/5 rounded-2xl space-y-4">
                 <div>
                   <h4 className="font-bold text-xs text-white">Local Ledger Backup Tool</h4>
-                  <p className="text-[10px] text-[#A3A3A3] mt-0.5">Export full JSON files locally or paste back a backup configuration string below.</p>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5">Export full JSON files locally or select a previously backed up JSON file to restore.</p>
                 </div>
 
-                <div className="space-y-2">
-                  <textarea
-                    value={jsonBackupString}
-                    onChange={(e) => setJsonBackupString(e.target.value)}
-                    placeholder="Paste full JSON backup content here..."
-                    className="w-full h-24 bg-[#111111] border border-white/5 rounded-xl p-3 text-xs font-mono text-[#A3A3A3] placeholder-[#A3A3A3]/40 focus:outline-none"
-                  />
+                <div className="space-y-4">
+                  {/* File Upload Selector Zone */}
+                  <div className="border border-dashed border-white/10 rounded-2xl p-4 bg-[#111111]/50 flex flex-col items-center justify-center gap-3 text-center transition-all duration-300 hover:border-white/20 hover:bg-[#111111]/80 group">
+                    <div className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#A3A3A3] group-hover:text-white group-hover:border-white/20 transition-all">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-white uppercase tracking-wider block">Select Backup JSON File</span>
+                      <span className="text-[9px] text-[#A3A3A3] uppercase tracking-wider block mt-0.5">Choose a standard Rentflo backup JSON file to restore</span>
+                    </div>
+                    <label className="px-4 py-2 bg-white text-slate-950 hover:bg-neutral-100 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1.5 shadow-md">
+                      Browse File
+                      <input type="file" className="hidden" accept=".json" onChange={handleFileSelect} />
+                    </label>
+                  </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={handleExportJSON}
-                      className="w-full py-2 bg-[#111111] hover:bg-white/5 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Export JSON File
-                    </button>
+                  <div className="relative flex items-center py-1">
+                    <div className="flex-grow border-t border-white/5"></div>
+                    <span className="flex-shrink mx-3 text-[9px] text-[#A3A3A3]/60 uppercase tracking-widest font-mono">Or paste raw text string</span>
+                    <div className="flex-grow border-t border-white/5"></div>
+                  </div>
 
-                    <button
-                      onClick={handleImportJSON}
-                      className="w-full py-2 bg-white text-slate-950 font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      Restore pasted text
-                    </button>
+                  <div className="space-y-2">
+                    <textarea
+                      value={jsonBackupString}
+                      onChange={(e) => setJsonBackupString(e.target.value)}
+                      placeholder="Paste full JSON backup content here..."
+                      className="w-full h-20 bg-[#111111] border border-white/5 rounded-xl p-3 text-xs font-mono text-[#A3A3A3] placeholder-[#A3A3A3]/40 focus:outline-none"
+                    />
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleExportJSON}
+                        className="w-full py-2 bg-[#111111] hover:bg-white/5 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Export JSON File
+                      </button>
+
+                      <button
+                        onClick={handleImportJSON}
+                        className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Restore pasted text
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -416,7 +416,7 @@ export function useStorage() {
     });
   }, []);
 
-  const restoreData = useCallback((newData: AppData) => {
+  const restoreData = useCallback(async (newData: AppData) => {
     const next = {
       ...newData,
       lastBackupAt: Date.now(),
@@ -449,12 +449,15 @@ export function useStorage() {
       console.error('[useStorage] Synchronous localStorage write failed:', err);
     }
 
-    // Save to database immediately to guarantee persistence before any UI blocking/refresh occurs!
-    db.set(STORAGE_KEY, recalculated).catch(e => {
+    try {
+      // Save to database immediately to guarantee persistence before any UI blocking/refresh occurs!
+      await db.set(STORAGE_KEY, recalculated);
+    } catch (e) {
       console.error('[useStorage] Immediate restore save failed:', e);
-    });
+    }
 
     setData(recalculated);
+    return true;
   }, []);
 
   const setSubscriptionPlan = useCallback((plan: SubscriptionPlan) => {
