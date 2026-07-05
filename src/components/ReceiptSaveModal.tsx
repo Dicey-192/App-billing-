@@ -26,40 +26,36 @@ export const ReceiptSaveModal: React.FC<ReceiptSaveModalProps> = ({
   const [shareSupported, setShareSupported] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
 
-  // Check if Web Share API is available and can share files
+  // Check if Web Share API is available safely
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
-      try {
-        if (imageBlob) {
-          const testFile = new File([imageBlob], 'receipt.png', { type: 'image/png' });
-          setShareSupported(navigator.canShare({ files: [testFile] }));
-        } else {
-          setShareSupported(true);
-        }
-      } catch (err) {
-        console.warn('Web Share detection issue:', err);
-        setShareSupported(false);
-      }
+    if (typeof navigator !== 'undefined' && typeof navigator.share !== 'undefined') {
+      setShareSupported(true);
     } else {
       setShareSupported(false);
     }
-  }, [imageBlob]);
+  }, []);
 
   const handleShareToGallery = async () => {
     if (!imageBlob || !imageUrl) return;
     setShareError(null);
     try {
-      const file = new File([imageBlob], filename, { type: 'image/png' });
-      
-      if (navigator.share) {
-        await navigator.share({
-          files: [file],
-          title: `Receipt for ${tenant?.name || 'Tenant'}`,
-          text: `Rent receipt for Room ${tenant?.roomNumber || ''} - ${property?.name || ''}`,
-        });
-      } else {
-        throw new Error('Native sharing not supported on this browser.');
+      const shareData: ShareData = {
+        title: `Receipt for ${tenant?.name || 'Tenant'}`,
+        text: `Rent receipt for Room ${tenant?.roomNumber || ''} - ${property?.name || ''}`,
+      };
+
+      if (typeof File !== 'undefined' && typeof navigator.canShare !== 'undefined') {
+        try {
+          const file = new File([imageBlob], filename, { type: 'image/png' });
+          if (navigator.canShare({ files: [file] })) {
+            shareData.files = [file];
+          }
+        } catch (fileErr) {
+          console.warn('Could not create file for sharing:', fileErr);
+        }
       }
+      
+      await navigator.share(shareData);
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('Share failed:', err);
@@ -71,15 +67,19 @@ export const ReceiptSaveModal: React.FC<ReceiptSaveModalProps> = ({
   const handleCopyImage = async () => {
     if (!imageBlob) return;
     try {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'image/png': imageBlob,
-        }),
-      ]);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (typeof window !== 'undefined' && 'ClipboardItem' in window) {
+        await navigator.clipboard.write([
+          new (window as any).ClipboardItem({
+            'image/png': imageBlob,
+          }),
+        ]);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        throw new Error('ClipboardItem not supported');
+      }
     } catch (err) {
-      console.error('Failed to copy image to clipboard:', err);
+      console.warn('Failed to copy image binary, falling back to URL copy:', err);
       // Fallback: copy data URL as text if writing binary image fails
       try {
         if (imageUrl) {
