@@ -19,7 +19,6 @@ import { DashboardView } from './components/DashboardView';
 import { TenantsView } from './components/TenantsView';
 import { PaymentsView } from './components/PaymentsView';
 import { SettingsView } from './components/SettingsView';
-import { ReceiptSaveModal } from './components/ReceiptSaveModal';
 import { db, AuditDB } from './lib/db';
 import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
@@ -331,21 +330,6 @@ export default function App() {
   const [batchModal, setBatchModal] = useState<{ open: boolean; tenants: Tenant[] }>({ open: false, tenants: [] });
   const [bulkTableModal, setBulkTableModal] = useState<{ open: boolean }>({ open: false });
   const [historyModal, setHistoryModal] = useState<{ open: boolean; data?: any }>({ open: false });
-  const [receiptSaveModal, setReceiptSaveModal] = useState<{
-    open: boolean;
-    tenant: Tenant | null;
-    property: Property | null;
-    imageUrl: string | null;
-    imageBlob: Blob | null;
-    filename: string;
-  }>({
-    open: false,
-    tenant: null,
-    property: null,
-    imageUrl: null,
-    imageBlob: null,
-    filename: '',
-  });
   const [rolloverPrompt, setRolloverPrompt] = useState<{ open: boolean; month: string }>({ open: false, month: '' });
   const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
   const [isBulkSending, setIsBulkSending] = useState(false);
@@ -354,18 +338,6 @@ export default function App() {
 
   const downloadReceipt = async (tenant: any) => {
     setProcessingId(tenant.id);
-    const filename = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
-    
-    // First, open the save center modal in generating/loading state
-    setReceiptSaveModal({
-      open: true,
-      tenant,
-      property: properties.find(p => p.id === tenant.propertyId) || null,
-      imageUrl: null,
-      imageBlob: null,
-      filename
-    });
-
     console.log(`Starting download for ${tenant.name}`);
     try {
       const element = document.getElementById(`receipt-${tenant.id}`);
@@ -378,28 +350,13 @@ export default function App() {
         backgroundColor: '#020617' // Match template bg
       });
       const url = canvas.toDataURL("image/png");
-      const blob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/png'));
-
-      // Update the modal with the loaded image url and blob
-      setReceiptSaveModal(prev => {
-        if (!prev.open || prev.tenant?.id !== tenant.id) return prev;
-        return {
-          ...prev,
-          imageUrl: url,
-          imageBlob: blob
-        };
-      });
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
+      link.click();
     } catch (e) {
       console.error("Download failed for tenant:", tenant.name, e);
       alert(`Failed to generate receipt for ${tenant.name}. Check console for details.`);
-      setReceiptSaveModal({
-        open: false,
-        tenant: null,
-        property: null,
-        imageUrl: null,
-        imageBlob: null,
-        filename: ''
-      });
     } finally {
       setProcessingId(null);
     }
@@ -2110,16 +2067,6 @@ export default function App() {
           handleBatchSave(updates);
           setBulkTableModal({ open: false });
         }}
-      />
-
-      <ReceiptSaveModal
-        isOpen={receiptSaveModal.open}
-        onClose={() => setReceiptSaveModal(prev => ({ ...prev, open: false }))}
-        tenant={receiptSaveModal.tenant}
-        property={receiptSaveModal.property}
-        imageUrl={receiptSaveModal.imageUrl}
-        imageBlob={receiptSaveModal.imageBlob}
-        filename={receiptSaveModal.filename}
       />
 
       <AnimatePresence>
