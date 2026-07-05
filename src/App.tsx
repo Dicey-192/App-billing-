@@ -19,6 +19,7 @@ import { DashboardView } from './components/DashboardView';
 import { TenantsView } from './components/TenantsView';
 import { PaymentsView } from './components/PaymentsView';
 import { SettingsView } from './components/SettingsView';
+import { ReceiptSaveModal } from './components/ReceiptSaveModal';
 import { db, AuditDB } from './lib/db';
 import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
@@ -330,6 +331,21 @@ export default function App() {
   const [batchModal, setBatchModal] = useState<{ open: boolean; tenants: Tenant[] }>({ open: false, tenants: [] });
   const [bulkTableModal, setBulkTableModal] = useState<{ open: boolean }>({ open: false });
   const [historyModal, setHistoryModal] = useState<{ open: boolean; data?: any }>({ open: false });
+  const [receiptSaveModal, setReceiptSaveModal] = useState<{
+    open: boolean;
+    tenant: Tenant | null;
+    property: Property | null;
+    imageUrl: string | null;
+    imageBlob: Blob | null;
+    filename: string;
+  }>({
+    open: false,
+    tenant: null,
+    property: null,
+    imageUrl: null,
+    imageBlob: null,
+    filename: '',
+  });
   const [rolloverPrompt, setRolloverPrompt] = useState<{ open: boolean; month: string }>({ open: false, month: '' });
   const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
   const [isBulkSending, setIsBulkSending] = useState(false);
@@ -338,6 +354,18 @@ export default function App() {
 
   const downloadReceipt = async (tenant: any) => {
     setProcessingId(tenant.id);
+    const filename = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
+    
+    // First, open the save center modal in generating/loading state
+    setReceiptSaveModal({
+      open: true,
+      tenant,
+      property: properties.find(p => p.id === tenant.propertyId) || null,
+      imageUrl: null,
+      imageBlob: null,
+      filename
+    });
+
     console.log(`Starting download for ${tenant.name}`);
     try {
       const element = document.getElementById(`receipt-${tenant.id}`);
@@ -350,13 +378,28 @@ export default function App() {
         backgroundColor: '#020617' // Match template bg
       });
       const url = canvas.toDataURL("image/png");
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
-      link.click();
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/png'));
+
+      // Update the modal with the loaded image url and blob
+      setReceiptSaveModal(prev => {
+        if (!prev.open || prev.tenant?.id !== tenant.id) return prev;
+        return {
+          ...prev,
+          imageUrl: url,
+          imageBlob: blob
+        };
+      });
     } catch (e) {
       console.error("Download failed for tenant:", tenant.name, e);
       alert(`Failed to generate receipt for ${tenant.name}. Check console for details.`);
+      setReceiptSaveModal({
+        open: false,
+        tenant: null,
+        property: null,
+        imageUrl: null,
+        imageBlob: null,
+        filename: ''
+      });
     } finally {
       setProcessingId(null);
     }
@@ -563,8 +606,32 @@ export default function App() {
   }
 
   // Google Auth & Drive States
-  const [googleUser, setGoogleUser] = useState<any>(null);
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [isSimulatedCloud, setIsSimulatedCloud] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('rentflo_simulated_cloud') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [googleUser, setGoogleUser] = useState<any>(() => {
+    try {
+      if (localStorage.getItem('rentflo_simulated_cloud') === 'true') {
+        return { email: 'simulated-sandbox-user@rentflo.com', name: 'Simulated User' };
+      }
+    } catch {}
+    return null;
+  });
+
+  const [googleToken, setGoogleToken] = useState<string | null>(() => {
+    try {
+      if (localStorage.getItem('rentflo_simulated_cloud') === 'true') {
+        return 'simulated-token';
+      }
+    } catch {}
+    return null;
+  });
+
   const [googleBackups, setGoogleBackups] = useState<DriveBackupFile[]>([]);
   const [isDriveBackingUp, setIsDriveBackingUp] = useState(false);
   const [isDriveLoadingBackups, setIsDriveLoadingBackups] = useState(false);
@@ -573,6 +640,7 @@ export default function App() {
 
   // Initialize Google Auth listener
   useEffect(() => {
+    if (isSimulatedCloud) return;
     const unsubscribe = initAuth(
       (user, token) => {
         setGoogleUser(user);
@@ -585,10 +653,54 @@ export default function App() {
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [isSimulatedCloud]);
+
+  const handleToggleSimulatedCloud = (enabled: boolean) => {
+    setIsSimulatedCloud(enabled);
+    if (enabled) {
+      localStorage.setItem('rentflo_simulated_cloud', 'true');
+      const mockUser = { email: 'simulated-sandbox-user@rentflo.com', name: 'Simulated User' };
+      setGoogleUser(mockUser);
+      setGoogleToken('simulated-token');
+      setCurrentUser({ email: 'simulated-sandbox-user@rentflo.com', role: 'owner' });
+      showToast('Simulated Cloud Sandbox activated!');
+      setTimeout(() => {
+        setIsDriveLoadingBackups(true);
+        try {
+          const stored = localStorage.getItem('rentflo_simulated_drive_backups');
+          const list = stored ? JSON.parse(stored) : [];
+          setGoogleBackups(list);
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsDriveLoadingBackups(false);
+        }
+      }, 50);
+    } else {
+      localStorage.removeItem('rentflo_simulated_cloud');
+      setGoogleUser(null);
+      setGoogleToken(null);
+      setGoogleBackups([]);
+      setGoogleAuthError(null);
+      showToast('Simulated Cloud Sandbox deactivated.');
+    }
+  };
 
   // Fetch Google Drive backups list automatically when token becomes available
   const fetchDriveBackups = async (token = googleToken) => {
+    if (isSimulatedCloud) {
+      setIsDriveLoadingBackups(true);
+      try {
+        const stored = localStorage.getItem('rentflo_simulated_drive_backups');
+        const list = stored ? JSON.parse(stored) : [];
+        setGoogleBackups(list);
+      } catch (err) {
+        console.error('[App] Simulated list failed:', err);
+      } finally {
+        setIsDriveLoadingBackups(false);
+      }
+      return;
+    }
     const activeToken = token || googleToken;
     if (!activeToken) return;
     setIsDriveLoadingBackups(true);
@@ -616,7 +728,7 @@ export default function App() {
     } else {
       setGoogleBackups([]);
     }
-  }, [googleToken]);
+  }, [googleToken, isSimulatedCloud]);
 
   const handleGoogleSignIn = async () => {
     try {
@@ -638,6 +750,10 @@ export default function App() {
   };
 
   const handleGoogleLogout = async () => {
+    if (isSimulatedCloud) {
+      handleToggleSimulatedCloud(false);
+      return;
+    }
     try {
       await googleLogout();
       setGoogleUser(null);
@@ -652,6 +768,31 @@ export default function App() {
   };
 
   const handleBackupToDrive = async () => {
+    if (isSimulatedCloud) {
+      setIsDriveBackingUp(true);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      try {
+        const stored = localStorage.getItem('rentflo_simulated_drive_backups');
+        const list = stored ? JSON.parse(stored) : [];
+        const newBackup = {
+          id: 'sim-' + Date.now(),
+          name: `rentflo_backup_${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+          createdTime: new Date().toISOString(),
+          size: (JSON.stringify(data).length / 1024).toFixed(1) + ' KB',
+          data: JSON.stringify(data)
+        };
+        list.unshift(newBackup);
+        localStorage.setItem('rentflo_simulated_drive_backups', JSON.stringify(list));
+        showToast('Snapshot backup successful! (Simulated Drive)');
+        setGoogleBackups(list);
+      } catch (err) {
+        console.error('Simulated backup failed:', err);
+        showToast('Simulated backup failed.');
+      } finally {
+        setIsDriveBackingUp(false);
+      }
+      return;
+    }
     if (!googleToken) {
       showToast('Please sign in with Google first.');
       return;
@@ -677,6 +818,34 @@ export default function App() {
   };
 
   const handleRestoreFromDrive = async (fileId: string, filename: string) => {
+    if (isSimulatedCloud) {
+      if (!confirm(`Are you absolutely sure you want to restore the backup '${filename}' from Simulated Cloud? This will overwrite all current system data.`)) {
+        return;
+      }
+      setIsDriveRestoring(true);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      try {
+        const stored = localStorage.getItem('rentflo_simulated_drive_backups');
+        const list = stored ? JSON.parse(stored) : [];
+        const found = list.find((b: any) => b.id === fileId);
+        if (!found) {
+          throw new Error('Simulated file not found');
+        }
+        const parsed = JSON.parse(found.data);
+        const success = await restoreData(parsed);
+        if (success) {
+          showToast('System data restored from Simulated Cloud!');
+        } else {
+          showToast('Failed to apply backup data.');
+        }
+      } catch (err: any) {
+        console.error('Simulated restore failed:', err);
+        showToast('Simulated restore failed.');
+      } finally {
+        setIsDriveRestoring(false);
+      }
+      return;
+    }
     if (!googleToken) {
       showToast('Please sign in with Google first.');
       return;
@@ -1770,6 +1939,8 @@ export default function App() {
                 showToast={showToast}
                 calendarSystem={calendarSystem}
                 setCalendarSystem={setCalendarSystem}
+                isSimulatedCloud={isSimulatedCloud}
+                setIsSimulatedCloud={handleToggleSimulatedCloud}
               />
             )}
           </motion.div>
@@ -1939,6 +2110,16 @@ export default function App() {
           handleBatchSave(updates);
           setBulkTableModal({ open: false });
         }}
+      />
+
+      <ReceiptSaveModal
+        isOpen={receiptSaveModal.open}
+        onClose={() => setReceiptSaveModal(prev => ({ ...prev, open: false }))}
+        tenant={receiptSaveModal.tenant}
+        property={receiptSaveModal.property}
+        imageUrl={receiptSaveModal.imageUrl}
+        imageBlob={receiptSaveModal.imageBlob}
+        filename={receiptSaveModal.filename}
       />
 
       <AnimatePresence>

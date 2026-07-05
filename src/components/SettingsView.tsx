@@ -44,6 +44,8 @@ interface SettingsViewProps {
   showToast: (msg: string, type?: any) => void;
   calendarSystem: 'AD' | 'BS';
   setCalendarSystem: (sys: 'AD' | 'BS') => void;
+  isSimulatedCloud?: boolean;
+  setIsSimulatedCloud?: (val: boolean) => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -80,7 +82,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   fetchDriveBackups,
   showToast,
   calendarSystem,
-  setCalendarSystem
+  setCalendarSystem,
+  isSimulatedCloud = false,
+  setIsSimulatedCloud
 }) => {
   const [activeSection, setActiveSection] = useState<'properties' | 'history' | 'rates' | 'utilities' | 'backup' | 'security' | 'other'>('properties');
   const [jsonBackupString, setJsonBackupString] = useState('');
@@ -450,11 +454,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {googleUser ? (
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] bg-green-500/10 border border-green-500/20 px-2 py-1 rounded text-green-400 font-bold uppercase">
-                        CONNECTED: {googleUser.email}
+                        {isSimulatedCloud ? 'SIMULATED:' : 'CONNECTED:'} {googleUser.email}
                       </span>
                       <button
                         onClick={handleGoogleLogout}
-                        className="p-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 rounded-lg cursor-pointer"
+                        className="p-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 rounded-lg cursor-pointer animate-fade-in"
                         title="Sign Out"
                       >
                         <LogOut className="w-3.5 h-3.5" />
@@ -469,6 +473,54 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </button>
                   )}
                 </div>
+
+                {/* Simulated Mode Option */}
+                <div className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl text-[10px] gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${isSimulatedCloud ? 'bg-amber-500 animate-pulse' : 'bg-neutral-600'}`} />
+                      <span className="text-white font-bold uppercase text-[9px]">Simulated Cloud (Demo Mode)</span>
+                    </div>
+                    <p className="text-[8px] text-[#A3A3A3] mt-0.5">Use a local simulated drive inside the iframe sandbox to completely test cloud backups.</p>
+                  </div>
+                  <button
+                    onClick={() => setIsSimulatedCloud?.(!isSimulatedCloud)}
+                    className={`px-2 py-1 font-mono font-black text-[8px] uppercase tracking-wider rounded-lg transition-all cursor-pointer flex-shrink-0 ${
+                      isSimulatedCloud 
+                        ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 font-bold' 
+                        : 'bg-white/5 hover:bg-white/10 text-white'
+                    }`}
+                  >
+                    {isSimulatedCloud ? 'DISABLE' : 'ACTIVATE'}
+                  </button>
+                </div>
+
+                {/* Connection Error Banner */}
+                {googleAuthError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500 mt-0.5" />
+                      <div>
+                        <p className="font-bold text-[10px] uppercase tracking-wider">Google Connection Issue</p>
+                        <p className="text-[10px] mt-0.5 leading-relaxed text-red-400/80">{googleAuthError}</p>
+                      </div>
+                    </div>
+                    {!isSimulatedCloud && (
+                      <div className="flex items-center gap-2 pt-1.5 border-t border-red-500/10">
+                        <span className="text-[9px] text-[#A3A3A3] uppercase">Blocked by sandbox?</span>
+                        <button
+                          onClick={() => {
+                            setIsSimulatedCloud?.(true);
+                            setGoogleAuthError(null);
+                          }}
+                          className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/20 text-amber-400 font-mono font-bold text-[8px] uppercase tracking-wider rounded cursor-pointer"
+                        >
+                          Enable Simulated Sandbox
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {googleUser && (
                   <div className="grid grid-cols-2 gap-2 border-t border-dashed border-white/5 pt-3">
@@ -500,10 +552,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <div key={bk.id} className="p-2.5 bg-[#111111] border border-white/5 rounded-xl flex items-center justify-between text-xs">
                         <div>
                           <span className="text-white font-mono text-[10px]">{bk.name}</span>
-                          <span className="block text-[8px] text-[#A3A3A3] mt-0.5">{new Date(bk.modifiedTime).toLocaleString()}</span>
+                          <span className="block text-[8px] text-[#A3A3A3] mt-0.5">
+                            {bk.createdTime ? new Date(bk.createdTime).toLocaleString() : 'Unknown Date'}
+                          </span>
                         </div>
                         <button
-                          onClick={() => handleRestoreFromDrive(bk.id)}
+                          onClick={() => handleRestoreFromDrive(bk.id, bk.name)}
                           disabled={isDriveRestoring}
                           className="px-2 py-1 bg-white text-slate-950 font-black rounded text-[8px] uppercase tracking-wider cursor-pointer"
                         >
