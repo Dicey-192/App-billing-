@@ -532,3 +532,48 @@ Execute tests representing core billing edge cases using Jest and React Testing 
 | **TS-003** | Partial Entry Overrides | Input 50% of `Total Due` | Status shifts to `Partial`. Remaining balance visible dynamically. |
 | **TS-004** | Limit Validation Error | Input > `Total Due` | Immediate UI error block; "Amount cannot exceed total due" displayed. |
 | **TS-005** | Recalculate Sync | Click "Sync Now" button | Re-executes ledger audit matching current variables instantly. |
+
+---
+
+## 7. Bulk Meter Readings Requirements & API Specifications
+
+### Overview
+A dedicated full-screen page (`/bulk-readings` view) replacing modal dialogs for high-volume meter reading entry.
+
+### Requirements & Behavior Matrix
+1. **Full-Page Architecture**: Full-screen view with header showing "Bulk Meter Readings - [Active Month/Year]", Back button, total tenant count, and edited status counter (`X / Y Tenants Edited`).
+2. **Scrollable Grid & Columns**:
+   - `Tenant / Room`: Room number and tenant name (fixed/sticky primary column).
+   - `Prev Elec`: Previous electricity meter reading (read-only reference).
+   - `Prev Water`: Previous water meter reading (read-only reference).
+   - `Current Elec`: Editable numeric input for current electricity reading.
+   - `Current Water`: Editable numeric input for current water reading.
+   - `Units Preview`: Dynamic display of calculated units (`Curr - Prev`).
+3. **Quick Action Controls**:
+   - `Reset All to Previous`: Resets current readings to match previous readings.
+   - `Add +5 to All Elec`: Increments all current electric fields by +5 units.
+   - `Add +1 to All Water`: Increments all current water fields by +1 unit.
+   - `Clear All Current`: Clears current input fields to 0.
+4. **Bulk Data Paste & AI Matcher**:
+   - Expandable text area `"Paste Bulk Data Here"` for copying tab-delimited or comma-delimited columns directly from Excel or Google Sheets (e.g. `101\t1250\t340` or `John Doe\t1250\t340`).
+   - `"Parse Data"` button uses room number and fuzzy name matching to map pasted values to tenants regardless of row order.
+   - Mismatch detection highlights invalid rows in red with manual override selectors before applying.
+5. **Data Validation & Error Messages**:
+   - `"Negative reading values are not permitted."`
+   - `"Current reading cannot be lower than previous reading without manual rollover confirmation."`
+   - `"Mismatch detected for row [X]: Unable to match tenant name/room number."`
+   - `"Failed to process bulk reading updates in transaction."`
+6. **Atomic Transaction Payload**:
+   ```json
+   {
+     "month": "2026-07",
+     "updates": [
+       {
+         "id": "tenant-uuid-1",
+         "currElecReading": 1250,
+         "currWaterReading": 340
+       }
+     ]
+   }
+   ```
+

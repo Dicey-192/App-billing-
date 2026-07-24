@@ -19,6 +19,7 @@ import { DashboardView } from './components/DashboardView';
 import { TenantsView } from './components/TenantsView';
 import { PaymentsView } from './components/PaymentsView';
 import { SettingsView } from './components/SettingsView';
+import { BulkReadingsView } from './components/BulkReadingsView';
 import { db, AuditDB } from './lib/db';
 import { initAuth, googleSignIn, getAccessToken, logout as googleLogout, getFirebaseErrorMessage, setCachedAccessToken } from './lib/googleAuth';
 import { uploadBackupToDrive, listBackupsFromDrive, downloadBackupFromDrive, DriveBackupFile } from './lib/googleDrive';
@@ -347,7 +348,7 @@ export default function App() {
         scale: 2, 
         useCORS: true, 
         logging: true,
-        backgroundColor: '#020617' // Match template bg
+        backgroundColor: '#FFFFFF'
       });
       const url = canvas.toDataURL("image/png");
       const link = document.createElement("a");
@@ -532,7 +533,7 @@ export default function App() {
               scale: 2, 
               useCORS: true, 
               logging: false,
-              backgroundColor: '#020617' // Match original style background
+              backgroundColor: '#FFFFFF'
             });
             
             // Extract the blob of the image and append binary to ZIP file
@@ -1294,7 +1295,7 @@ export default function App() {
     try {
       const element = document.getElementById(`receipt-${tenant.id}`);
       if (element) {
-        const canvas = await safeHtml2Canvas(element, { scale: 2, backgroundColor: '#020617' });
+        const canvas = await safeHtml2Canvas(element, { scale: 2, backgroundColor: '#FFFFFF' });
         const blob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/png'));
         
         const message = getWhatsAppMessage(tenant, prop);
@@ -1741,12 +1742,12 @@ export default function App() {
              {currentView === 'tenants' && (
                 <div className="flex flex-wrap gap-2">
                   <button 
-                    onClick={() => setBulkTableModal({ open: true })}
+                    onClick={() => setView('bulk-readings')}
                     className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-white border border-white/20 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2"
-                    title="Enter all electricity and water data units serially in a tabular format"
+                    title="Full-page bulk meter reading entry table"
                   >
                     <Clipboard className="w-4 h-4" />
-                    BULK DATA ENTRY
+                    BULK METER READINGS
                   </button>
                   <button 
                     onClick={() => {
@@ -1847,6 +1848,21 @@ export default function App() {
                 handleBulkDownload={handleBulkDownload}
                 printAllReceipts={handleBulkPrint}
                 addAuditLog={addAuditLog}
+                showToast={showToast}
+                onNavigateToBulkReadings={() => setView('bulk-readings')}
+              />
+            )}
+            {currentView === 'bulk-readings' && (
+              <BulkReadingsView
+                tenants={tenants}
+                properties={properties}
+                activeMonth={data.activeMonth || ''}
+                onBack={() => setView('tenants')}
+                onSave={(updates) => {
+                  handleBatchSave(updates);
+                }}
+                addAuditLog={addAuditLog}
+                recalculateBalances={recalculateBalances}
                 showToast={showToast}
               />
             )}
@@ -2778,7 +2794,7 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
         scale: 2, 
         useCORS: true, 
         logging: true,
-        backgroundColor: '#020617' // Match template bg
+        backgroundColor: '#FFFFFF'
       });
       const url = canvas.toDataURL("image/png");
       const link = document.createElement("a");
@@ -3041,7 +3057,7 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
               scale: 2, 
               useCORS: true, 
               logging: false,
-              backgroundColor: '#020617' // Match original style background
+              backgroundColor: '#FFFFFF'
             });
             
             // Extract the blob of the image and append binary to ZIP file

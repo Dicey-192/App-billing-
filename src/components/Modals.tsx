@@ -200,6 +200,183 @@ export const PropertyModal: React.FC<{
   );
 };
 
+export const PropertyRatesModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  property: Property | null;
+  onSave?: (propertyId: string, electricRate: number, waterRate: number) => void;
+  onSaveRates?: (propertyId: string, electricRate: number, waterRate: number) => void;
+}> = ({ isOpen, onClose, property, onSave, onSaveRates }) => {
+  const [elecRate, setElecRate] = useState<number>(0);
+  const [waterRate, setWaterRate] = useState<number>(0);
+
+  useEffect(() => {
+    if (property) {
+      setElecRate(property.electricRate ?? 0);
+      setWaterRate(property.waterRate ?? 0);
+    }
+  }, [property]);
+
+  if (!property) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const saveFn = onSave || onSaveRates;
+    if (saveFn) {
+      saveFn(property.id, Number(elecRate) || 0, Number(waterRate) || 0);
+    }
+    onClose();
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Edit Utility Rates - ${property.name}`}>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-1">
+          <p className="text-xs font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5" /> Strict Rate Controls
+          </p>
+          <p className="text-[11px] text-amber-200/80 leading-normal">
+            Updated tariff rates will apply to future billing cycles and meter calculations only. Past receipts and historical statements remain unchanged. No notifications sent.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label flex items-center gap-2 text-xs font-bold text-slate-300 mb-1">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              Electricity Tariff Rate (per unit / kWh)
+            </label>
+            <input 
+              type="number" 
+              step="0.01"
+              min="0"
+              required
+              className="input bg-slate-900/80 text-white font-mono text-sm font-bold border border-white/10 rounded-xl px-4 py-3 w-full focus:border-amber-500 focus:outline-none" 
+              value={elecRate} 
+              onChange={e => setElecRate(Number(e.target.value))} 
+            />
+          </div>
+
+          <div>
+            <label className="label flex items-center gap-2 text-xs font-bold text-slate-300 mb-1">
+              <Droplets className="w-3.5 h-3.5 text-cyan-400" />
+              Water Tariff Rate (per unit / m³)
+            </label>
+            <input 
+              type="number" 
+              step="0.01"
+              min="0"
+              required
+              className="input bg-slate-900/80 text-white font-mono text-sm font-bold border border-white/10 rounded-xl px-4 py-3 w-full focus:border-cyan-500 focus:outline-none" 
+              value={waterRate} 
+              onChange={e => setWaterRate(Number(e.target.value))} 
+            />
+          </div>
+        </div>
+
+        <div className="pt-4 flex items-center justify-end gap-3">
+          <button 
+            type="button" 
+            onClick={onClose}
+            className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-300 cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button 
+            type="submit" 
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest shadow-lg cursor-pointer"
+          >
+            Save Rates
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+export const PropertyQuickViewModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  property: Property | null;
+  tenantCount?: number;
+  onEditRates?: (property: Property) => void;
+  onOpenRatesEdit?: (property: Property) => void;
+}> = ({ isOpen, onClose, property, tenantCount = 0, onEditRates, onOpenRatesEdit }) => {
+  if (!property) return null;
+
+  const handleEditClick = () => {
+    onClose();
+    const editFn = onEditRates || onOpenRatesEdit;
+    if (editFn) editFn(property);
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Property Overview`}>
+      <div className="space-y-6">
+        <div className="flex items-start justify-between p-4 bg-white/5 border border-white/10 rounded-2xl">
+          <div>
+            <span className="font-mono text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded font-bold uppercase">
+              ID: {property.id.slice(0, 8)}
+            </span>
+            <h3 className="text-lg font-black text-white mt-1.5">{property.name}</h3>
+            {property.address && (
+              <p className="text-xs text-slate-400 mt-1">{property.address}</p>
+            )}
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-mono text-slate-400 block">Registered Tenants</span>
+            <span className="text-xl font-black text-white">{tenantCount}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-1">
+            <span className="text-[10px] font-mono text-amber-400 uppercase font-bold flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5" /> Electricity Rate
+            </span>
+            <p className="text-lg font-black text-white font-mono">
+              NPR {property.electricRate} <span className="text-xs font-normal text-slate-400">/ unit</span>
+            </p>
+          </div>
+
+          <div className="p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-xl space-y-1">
+            <span className="text-[10px] font-mono text-cyan-400 uppercase font-bold flex items-center gap-1">
+              <Droplets className="w-3.5 h-3.5" /> Water Rate
+            </span>
+            <p className="text-lg font-black text-white font-mono">
+              NPR {property.waterRate} <span className="text-xs font-normal text-slate-400">/ unit</span>
+            </p>
+          </div>
+        </div>
+
+        {property.qrCodeDataUrl && (
+          <div className="p-4 bg-slate-900/50 border border-white/10 rounded-2xl flex items-center gap-4">
+            <img src={property.qrCodeDataUrl} className="w-20 h-20 bg-white rounded-xl p-1.5 object-contain" alt="QR Code" />
+            <div>
+              <p className="text-xs font-bold text-white uppercase">Payment QR Configured</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Scanned by tenants for direct digital payments.</p>
+            </div>
+          </div>
+        )}
+
+        <div className="pt-2 flex items-center justify-between border-t border-white/10">
+          <p className="text-[10px] text-slate-500 italic">
+            Rates apply to future billing cycles only.
+          </p>
+          <button
+            onClick={handleEditClick}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+            Edit Rates
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+
 export const TenantModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;

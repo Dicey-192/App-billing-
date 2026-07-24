@@ -44,6 +44,7 @@ interface TenantsViewProps {
   printAllReceipts?: () => void;
   addAuditLog?: (tenantId: string, tenantName: string, month: string, fieldName: string, oldValue: string, newValue: string) => void;
   showToast?: (msg: string, type?: any) => void;
+  onNavigateToBulkReadings?: () => void;
 }
 
 export const TenantsView: React.FC<TenantsViewProps> = ({
@@ -79,7 +80,8 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   handleBulkDownload,
   printAllReceipts,
   addAuditLog,
-  showToast
+  showToast,
+  onNavigateToBulkReadings
 }) => {
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -290,11 +292,11 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
           </button>
 
           <button
-            onClick={() => setBulkTableModal({ open: true })}
+            onClick={() => onNavigateToBulkReadings ? onNavigateToBulkReadings() : setBulkTableModal({ open: true })}
             className="px-3 py-2 bg-[#111111] hover:bg-[#181818] border border-white/5 rounded-xl text-[10px] font-bold uppercase tracking-wider text-[#A3A3A3] hover:text-white flex items-center gap-2 transition-all cursor-pointer"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
-            Bulk Matrix Entry
+            Bulk Meter Readings
           </button>
         </div>
       </div>

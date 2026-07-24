@@ -3,7 +3,7 @@ import { Users, LayoutDashboard, Settings, CreditCard, Plus, Zap, HeartHandshake
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
-export type ViewType = 'dashboard' | 'tenants' | 'payments' | 'settings';
+export type ViewType = 'dashboard' | 'tenants' | 'payments' | 'settings' | 'bulk-readings';
 
 interface NavigationProps {
   currentView: ViewType;

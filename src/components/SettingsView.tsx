@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Property, BillHistoryEntry } from '../types';
 import { formatCurrency } from '../lib/utils';
 import { 
   Home, Users, ShieldAlert, Sparkles, SlidersHorizontal, AlertCircle, 
   Trash2, Edit2, Plus, Calendar, RefreshCw, KeyRound, Download, 
   Upload, CheckCircle2, ChevronRight, Info, Settings, Bell, Palette, 
-  BookOpen, LogOut, Check, History, FileText
+  BookOpen, LogOut, Check, History, FileText, Search, Zap, Droplets
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { PropertyRatesModal, PropertyQuickViewModal } from './Modals';
 
 interface SettingsViewProps {
   properties: Property[];
@@ -88,6 +89,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [activeSection, setActiveSection] = useState<'properties' | 'history' | 'rates' | 'utilities' | 'backup' | 'security' | 'other'>('properties');
   const [jsonBackupString, setJsonBackupString] = useState('');
+  const [propertySearch, setPropertySearch] = useState('');
+  const [editingRatesProperty, setEditingRatesProperty] = useState<Property | null>(null);
+  const [quickViewProperty, setQuickViewProperty] = useState<Property | null>(null);
+
+  const filteredProperties = useMemo(() => {
+    const q = propertySearch.toLowerCase().trim();
+    if (!q) return properties;
+    return properties.filter(p => 
+      p.name.toLowerCase().includes(q) || 
+      p.id.toLowerCase().includes(q)
+    );
+  }, [properties, propertySearch]);
 
   // Handle local export file trigger
   const handleExportJSON = () => {
@@ -310,7 +323,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* PROPERTIES PANEL */}
           {activeSection === 'properties' && (
             <div className="space-y-6 animate-fade-in">
-              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+              <div className="flex flex-wrap justify-between items-center gap-3 border-b border-white/5 pb-3">
                 <div>
                   <h3 className="font-bold text-sm text-white uppercase tracking-wider">Properties Directory</h3>
                   <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wide">Register new buildings or physical facilities</p>
@@ -318,36 +331,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 
                 <button
                   onClick={() => setPropertyModal({ open: true })}
-                  className="px-3 py-1.5 bg-white text-[#050505] font-sans font-black text-[9px] tracking-widest uppercase rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2 bg-white text-[#050505] font-sans font-black text-[10px] tracking-widest uppercase rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer hover:bg-slate-200"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Property
                 </button>
               </div>
 
+              {/* Search/filter by ID or name at top */}
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Filter properties by ID or Name..."
+                  value={propertySearch}
+                  onChange={e => setPropertySearch(e.target.value)}
+                  className="w-full bg-[#111111] border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
+                />
+              </div>
+
               <div className="space-y-3">
-                {properties.length === 0 ? (
-                  <p className="text-xs text-[#A3A3A3] italic py-6 text-center border border-dashed border-white/5 rounded-2xl">
-                    No active facilities registered. Add properties to configure utility meters.
+                {filteredProperties.length === 0 ? (
+                  <p className="text-xs text-[#A3A3A3] italic py-8 text-center border border-dashed border-white/5 rounded-2xl">
+                    {propertySearch ? 'No properties matched your filter.' : 'No active facilities registered. Add properties to configure utility meters.'}
                   </p>
                 ) : (
-                  properties.map(p => (
-                    <div key={p.id} className="p-4 bg-[#181818] border border-white/5 rounded-2xl flex items-center justify-between">
-                      <div>
-                        <h4 className="font-bold text-xs text-white flex items-center gap-2">
-                          <Home className="w-3.5 h-3.5 text-[#A3A3A3]" />
-                          {p.name}
-                        </h4>
-                        <p className="text-[10px] text-[#A3A3A3] mt-1">
-                          Electricity Rate: NPR {p.electricRate}/unit • Water Rate: NPR {p.waterRate}/unit
-                        </p>
+                  filteredProperties.map(p => (
+                    <div 
+                      key={p.id} 
+                      onClick={() => setQuickViewProperty(p)}
+                      className="p-4 bg-[#181818] hover:bg-[#1f1f1f] border border-white/5 hover:border-white/10 rounded-2xl flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-amber-400 font-mono text-[10px] font-bold shrink-0">
+                          ID: {p.id.length > 12 ? p.id.slice(0, 10) + '…' : p.id}
+                        </span>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-xs text-white flex items-center gap-2 truncate">
+                            <Home className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="truncate">{p.name}</span>
+                          </h4>
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-[#A3A3A3] mt-1">
+                            <span className="text-amber-400 font-semibold">⚡ Elec: NPR {p.electricRate}/unit</span>
+                            <span>•</span>
+                            <span className="text-cyan-400 font-semibold">💧 Water: NPR {p.waterRate}/unit</span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
                         <button
-                          onClick={() => setPropertyModal({ open: true, property: p })}
-                          className="p-1.5 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[#A3A3A3] hover:text-white cursor-pointer"
-                          title="Modify Rates"
+                          onClick={() => setEditingRatesProperty(p)}
+                          className="p-2 bg-[#111111] hover:bg-amber-500/20 border border-white/5 hover:border-amber-500/30 rounded-xl text-[#A3A3A3] hover:text-amber-400 cursor-pointer transition-all"
+                          title="Edit Utility Rates Only"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -357,7 +393,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               deleteProperty(p.id);
                             }
                           }}
-                          className="p-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 rounded-lg cursor-pointer"
+                          className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 rounded-xl cursor-pointer transition-all"
+                          title="Delete Property"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -366,6 +403,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   ))
                 )}
               </div>
+
+              {/* Minimal Tariff Rates Modal */}
+              <PropertyRatesModal
+                isOpen={!!editingRatesProperty}
+                onClose={() => setEditingRatesProperty(null)}
+                property={editingRatesProperty}
+                onSaveRates={(propId, elecRate, waterRate) => {
+                  updateProperty(propId, { electricRate: elecRate, waterRate: waterRate });
+                  showToast("Utility tariff rates updated for future cycles successfully.", "success");
+                }}
+              />
+
+              {/* Tappable Card Quick View Modal */}
+              <PropertyQuickViewModal
+                isOpen={!!quickViewProperty}
+                onClose={() => setQuickViewProperty(null)}
+                property={quickViewProperty}
+                tenantCount={quickViewProperty ? (data?.tenants ? data.tenants.filter((t: any) => t.propertyId === quickViewProperty.id).length : 0) : 0}
+                onOpenRatesEdit={(p) => setEditingRatesProperty(p)}
+              />
             </div>
           )}
 
