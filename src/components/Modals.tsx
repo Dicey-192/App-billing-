@@ -1469,24 +1469,35 @@ export const TenantProfileModal: React.FC<{
     });
   };
 
+  const [showEditDetails, setShowEditDetails] = useState(false);
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Tenant Dossier & Records`}>
-      <div className="space-y-6">
-        {/* Dossier Header Info */}
-        <div className="p-6 bg-white/5 rounded-3xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-xl font-extrabold text-white">{tenant.name}</h4>
-              <span className="px-2.5 py-0.5 bg-slate-800 rounded-lg text-[10px] font-mono text-slate-400">RM {tenant.roomNumber}</span>
+    <>
+      <Modal isOpen={isOpen} onClose={onClose} title={`Tenant Dossier & Records`}>
+        <div className="space-y-6">
+          {/* Dossier Header Info */}
+          <div className="p-6 bg-white/5 rounded-3xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xl font-extrabold text-white">{tenant.name}</h4>
+                <span className="px-2.5 py-0.5 bg-slate-800 rounded-lg text-[10px] font-mono text-slate-400">RM {tenant.roomNumber}</span>
+              </div>
+              <p className="text-xs text-slate-400 font-medium mt-1">{property.name}</p>
+              {(tenant.whatsappNumber || (tenant as any).phone) && (
+                <div className="text-xs text-slate-400 font-mono mt-1">
+                  Phone/WhatsApp: <span className="text-blue-400 font-bold">{tenant.whatsappNumber || (tenant as any).phone}</span>
+                </div>
+              )}
             </div>
-            <p className="text-xs text-slate-400 font-medium mt-1">{property.name}</p>
+            
+            <button
+              onClick={() => setShowEditDetails(true)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shrink-0 shadow-lg"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+              Edit Tenant Details
+            </button>
           </div>
-          {tenant.whatsappNumber && (
-            <div className="text-sm text-slate-500 font-mono">
-              WhatsApp: <span className="text-blue-400 font-bold">{tenant.whatsappNumber}</span>
-            </div>
-          )}
-        </div>
 
         {/* Current Month Bill Profile (Inline View/Edit) */}
         <div className="p-6 bg-slate-900/40 rounded-3xl border border-white/5">
@@ -1742,6 +1753,95 @@ export const TenantProfileModal: React.FC<{
           )}
         </div>
       </div>
+    </Modal>
+
+    <EditTenantDetailsModal
+      isOpen={showEditDetails}
+      onClose={() => setShowEditDetails(false)}
+      tenant={tenant}
+      onUpdateTenant={onUpdateTenant}
+    />
+    </>
+  );
+};
+
+export const EditTenantDetailsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  tenant: Tenant;
+  onUpdateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
+  showToast?: (msg: string, type?: string) => void;
+}> = ({ isOpen, onClose, tenant, onUpdateTenant, showToast }) => {
+  const [name, setName] = useState(tenant?.name || '');
+  const [phone, setPhone] = useState(tenant?.whatsappNumber || (tenant as any)?.phone || '');
+
+  useEffect(() => {
+    if (tenant) {
+      setName(tenant.name || '');
+      setPhone(tenant.whatsappNumber || (tenant as any)?.phone || '');
+    }
+  }, [tenant, isOpen]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onUpdateTenant(tenant.id, {
+      name: name.trim(),
+      whatsappNumber: phone.trim(),
+      phone: phone.trim()
+    });
+    if (showToast) {
+      showToast('Tenant details updated successfully');
+    }
+    onClose();
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Edit Tenant Details">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+            Tenant Name
+          </label>
+          <input
+            type="text"
+            required
+            className="input bg-slate-900/80 border-white/10 w-full text-sm font-bold text-white focus:border-blue-500"
+            placeholder="e.g. Rahul Sharma"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+            Phone Number / WhatsApp
+          </label>
+          <input
+            type="text"
+            className="input bg-slate-900/80 border-white/10 w-full text-sm font-mono text-white focus:border-blue-500"
+            placeholder="e.g. +91 9876543210"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold uppercase rounded-xl transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase rounded-xl transition-colors shadow-lg cursor-pointer"
+          >
+            Save Changes
+          </button>
+        </div>
+      </form>
     </Modal>
   );
 };

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ArrowLeft, Check, RotateCcw, Zap, Droplets, Sparkles, 
-  AlertTriangle, Upload, Search, Filter, ShieldCheck, 
-  HelpCircle, ChevronDown, ChevronUp, FileSpreadsheet, RefreshCw
+  AlertTriangle, Search, ShieldCheck, 
+  FileSpreadsheet, X, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Tenant, Property } from '../types';
@@ -45,7 +45,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     );
   });
 
-  // Tracking edited rows to display status count
+  // Tracking edited rows
   const [editedTenantIds, setEditedTenantIds] = useState<Set<string>>(new Set());
 
   // Search, Property Filter & Sort
@@ -62,7 +62,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   // Validation errors
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // Initialize/sync local readings state if tenants list changes
+  // Sync local readings if tenants change
   useEffect(() => {
     const initialMap = Object.fromEntries(
       tenants.map(t => [t.id, { currElec: t.currElecReading, currWater: t.currWaterReading }])
@@ -92,7 +92,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     return list;
   }, [tenants, selectedPropertyId, searchQuery, sortOrder]);
 
-  // Handle single cell update
+  // Handle single field update
   const handleCellUpdate = (id: string, field: 'currElec' | 'currWater', val: number) => {
     const cleanVal = isNaN(val) ? 0 : val;
     setReadings(prev => {
@@ -113,7 +113,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     });
   };
 
-  // Quick Action Fillers
+  // Quick Action Fillers across visible tenants
   const handleQuickAction = (type: 'reset_prev' | 'add5_elec' | 'add1_water' | 'clear_all') => {
     const nextReadings = { ...readings };
     const nextEdited = new Set(editedTenantIds);
@@ -137,10 +137,10 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
 
     if (showToast) {
       const labels = {
-        reset_prev: 'All current readings reset to previous readings.',
-        add5_elec: 'Added +5 units to Electricity for visible tenants.',
-        add1_water: 'Added +1 unit to Water for visible tenants.',
-        clear_all: 'Cleared current readings for visible tenants.'
+        reset_prev: 'Reset all visible readings to previous values.',
+        add5_elec: 'Added +5 units to Electricity for all visible tenants.',
+        add1_water: 'Added +1 unit to Water for all visible tenants.',
+        clear_all: 'Cleared current readings for all visible tenants.'
       };
       showToast(labels[type]);
     }
@@ -157,7 +157,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     const parsedList: ParsedRow[] = [];
 
     lines.forEach((line, index) => {
-      // Split by tab, comma, or multiple spaces
       const tokens = line.split(/\t|,|\s{2,}/).map(tok => tok.trim()).filter(tok => tok.length > 0);
 
       if (tokens.length === 0) return;
@@ -166,18 +165,15 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
       let elecVal: number | null = null;
       let waterVal: number | null = null;
 
-      // Extract numeric values and identifier
       if (tokens.length >= 3) {
         roomOrName = tokens[0];
         elecVal = parseFloat(tokens[1]);
         waterVal = parseFloat(tokens[2]);
       } else if (tokens.length === 2) {
-        // If 2 tokens: check if first is identifier or number
         if (isNaN(Number(tokens[0]))) {
           roomOrName = tokens[0];
           elecVal = parseFloat(tokens[1]);
         } else {
-          // Assume order: Elec, Water for index matching
           elecVal = parseFloat(tokens[0]);
           waterVal = parseFloat(tokens[1]);
         }
@@ -185,7 +181,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         elecVal = parseFloat(tokens[0]);
       }
 
-      // Try matching tenant
       let matchedTenant = null;
       if (roomOrName) {
         const q = roomOrName.toLowerCase();
@@ -197,7 +192,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         );
       }
 
-      // Fallback: match by index if no name/room matched
       if (!matchedTenant && index < filteredSortedTenants.length) {
         matchedTenant = filteredSortedTenants[index];
       }
@@ -227,11 +221,10 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
 
     const matchCount = parsedList.filter(r => r.isMatched && r.matchedTenantId).length;
     if (showToast) {
-      showToast(`Parsed ${parsedList.length} rows (${matchCount} matched automatically).`);
+      showToast(`Parsed ${parsedList.length} rows (${matchCount} matched).`);
     }
   };
 
-  // Apply parsed rows to local readings state
   const handleApplyParsedData = () => {
     const nextReadings = { ...readings };
     const nextEdited = new Set(editedTenantIds);
@@ -261,7 +254,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     }
   };
 
-  // Manual adjustment of parsed row tenant assignment
   const handleUpdateParsedRowTenant = (rowIndex: number, tenantId: string) => {
     setParsedRows(prev => {
       const next = [...prev];
@@ -278,7 +270,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     });
   };
 
-  // Final Validation before Apply
   const validateReadings = (): boolean => {
     const errors: string[] = [];
 
@@ -298,7 +289,6 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     return errors.length === 0;
   };
 
-  // Apply all changes atomically
   const handleApplyAll = () => {
     if (!validateReadings()) {
       if (showToast) showToast('Validation errors found. Please correct negative values before saving.', 'error');
@@ -311,10 +301,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
       currWater: readings[t.id]?.currWater ?? t.currWaterReading
     }));
 
-    // Perform save
     onSave(updates);
 
-    // Audit Log recording
     editedTenantIds.forEach(id => {
       const t = tenants.find(item => item.id === id);
       if (t && addAuditLog) {
@@ -335,81 +323,58 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     }
 
     if (showToast) {
-      showToast('Readings rolled over/applied successfully. Ready for new entries.');
+      showToast('All meter readings saved and balances updated successfully!');
     }
 
     onBack();
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-slate-100 flex flex-col font-sans selection:bg-amber-500/30">
+    <div className="min-h-screen bg-[#0A0A0A] text-slate-100 flex flex-col font-sans">
       
-      {/* Header Bar */}
-      <header className="sticky top-0 z-30 bg-[#111111]/90 backdrop-blur-xl border-b border-white/10 px-4 py-3.5 sm:px-8">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      {/* 1. Full Page Top Header */}
+      <header className="sticky top-0 z-30 bg-[#111111]/95 backdrop-blur-xl border-b border-white/10 px-4 py-4 sm:px-8 shadow-xl">
+        <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4">
           
-          {/* Title & Back */}
+          {/* Title, Period & Back button */}
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center"
-              title="Return to Tenants Ledger"
+              className="p-2.5 bg-[#181818] hover:bg-white/10 border border-white/10 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center shrink-0"
+              title="Return to Tenants"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-5 h-5 text-blue-400" />
             </button>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="p-1 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-md">
-                  <Zap className="w-3.5 h-3.5" />
-                </span>
-                <h1 className="text-lg sm:text-xl font-black text-white tracking-tight uppercase">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                   Bulk Meter Readings
                 </h1>
-                <span className="text-xs bg-white/5 border border-white/10 px-2 py-0.5 rounded-full font-mono text-amber-400 font-bold">
+                <span className="text-xs bg-amber-500/10 border border-amber-500/20 px-3 py-0.5 rounded-full font-mono text-amber-400 font-bold">
                   {activeMonth || 'Active Billing Cycle'}
                 </span>
               </div>
-              <p className="text-[11px] text-[#A3A3A3] mt-0.5">
-                Full-page table view for high-speed monthly utility meter entries.
+              <p className="text-xs text-slate-400 mt-0.5">
+                Fast card-based utility entry for high-volume monthly readings.
               </p>
             </div>
           </div>
 
-          {/* Metrics & Save Controls */}
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 bg-white/[0.03] border border-white/10 px-3 py-1.5 rounded-xl font-mono text-xs">
-              <span className="text-slate-500">Edited:</span>
-              <span className="text-amber-400 font-bold">{editedTenantIds.size} / {tenants.length}</span>
-            </div>
-
-            <button
-              onClick={() => setShowPasteTool(!showPasteTool)}
-              className={`px-3.5 py-2 border rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
-                showPasteTool 
-                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' 
-                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-200'
-              }`}
-            >
-              <FileSpreadsheet className="w-4 h-4 text-amber-400" />
-              <span>{showPasteTool ? 'Hide Paste Tool' : 'Paste Spreadsheet'}</span>
-            </button>
-
-            <button
-              onClick={handleApplyAll}
-              className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
-            >
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>Apply All Readings</span>
-            </button>
+          {/* Quick Metrics */}
+          <div className="flex items-center gap-2 bg-[#181818] border border-white/10 px-3.5 py-1.5 rounded-xl font-mono text-xs">
+            <span className="text-slate-400">Modified:</span>
+            <span className="text-amber-400 font-bold">{editedTenantIds.size} / {tenants.length}</span>
           </div>
+
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      {/* Main Body */}
+      <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 space-y-6 pb-28">
 
         {/* Validation Errors Alert */}
         {validationErrors.length > 0 && (
-          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-xs space-y-2 animate-shake">
+          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-xs space-y-2">
             <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-red-400">
               <AlertTriangle className="w-4 h-4" />
               <span>Validation Errors Blocking Save ({validationErrors.length})</span>
@@ -422,6 +387,29 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
           </div>
         )}
 
+        {/* 2. Top Row: Paste Spreadsheet | Reset All to Previous */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            onClick={() => setShowPasteTool(!showPasteTool)}
+            className={`p-3.5 border rounded-2xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+              showPasteTool 
+                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' 
+                : 'bg-[#111111] hover:bg-white/10 border-white/10 text-white'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4 text-amber-400" />
+            <span>{showPasteTool ? 'Hide Paste Tool' : 'Paste Spreadsheet'}</span>
+          </button>
+
+          <button
+            onClick={() => handleQuickAction('reset_prev')}
+            className="p-3.5 bg-[#111111] hover:bg-white/10 border border-white/10 rounded-2xl font-bold text-xs uppercase tracking-wider text-slate-300 hover:text-white flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+          >
+            <RotateCcw className="w-4 h-4 text-slate-400" />
+            <span>Reset All to Previous</span>
+          </button>
+        </div>
+
         {/* Expandable Bulk Spreadsheet Paste Feature */}
         <AnimatePresence>
           {showPasteTool && (
@@ -431,20 +419,20 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="p-5 bg-[#121212] border border-amber-500/30 rounded-2xl space-y-4 shadow-2xl relative">
+              <div className="p-5 bg-[#111111] border border-amber-500/30 rounded-3xl space-y-4 shadow-2xl relative">
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="text-sm font-black uppercase text-amber-400 flex items-center gap-2">
                       <FileSpreadsheet className="w-4 h-4" />
-                      Spreadsheet Bulk Data Import & AI Matcher
+                      Spreadsheet Bulk Data Import
                     </h3>
                     <p className="text-xs text-slate-400 mt-1">
-                      Copy cells directly from Excel or Google Sheets. Paste them below to match readings automatically.
+                      Copy cells directly from Excel or Google Sheets (Room | Elec | Water). Paste them below.
                     </p>
                   </div>
-                  <span className="text-[10px] font-mono text-slate-500 bg-white/5 border border-white/10 px-2 py-1 rounded">
-                    Format: Room | Elec | Water
-                  </span>
+                  <button onClick={() => setShowPasteTool(false)} className="text-slate-400 hover:text-white p-1">
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
 
                 <div className="space-y-2">
@@ -453,16 +441,16 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                     value={pasteText}
                     onChange={e => setPasteText(e.target.value)}
                     placeholder={`Copy & paste Excel rows here...\nExample:\n101\t1250\t340\n102\t1400\t410\n103\t1550\t480`}
-                    className="w-full bg-[#0A0A0A] border border-white/10 rounded-xl p-3 font-mono text-xs text-amber-200 placeholder-slate-600 focus:outline-none focus:border-amber-500/50 resize-y"
+                    className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl p-3.5 font-mono text-xs text-amber-200 placeholder-slate-600 focus:outline-none focus:border-amber-500/50 resize-y"
                   />
 
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] text-slate-500 italic">
-                      Support columns: Room / Name, Current Elec, Current Water (tab or comma separated).
+                      Columns: Room/Name, Elec, Water (tab or comma separated).
                     </p>
                     <button
                       onClick={handleParsePaste}
-                      className="px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider hover:bg-amber-400 cursor-pointer flex items-center gap-1.5"
+                      className="px-4 py-2 bg-amber-500 text-slate-950 font-extrabold rounded-xl text-xs uppercase tracking-wider hover:bg-amber-400 cursor-pointer flex items-center gap-1.5 shadow-md"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                       <span>Parse & Match Data</span>
@@ -476,26 +464,26 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                     <div className="flex items-center justify-between">
                       <h4 className="text-xs font-bold uppercase text-white tracking-wider flex items-center gap-2">
                         <ShieldCheck className="w-4 h-4 text-green-400" />
-                        <span>Parsed Preview & Match Verification ({parsedRows.filter(r => r.isMatched).length} / {parsedRows.length} Matched)</span>
+                        <span>Parsed Preview ({parsedRows.filter(r => r.isMatched).length} / {parsedRows.length} Matched)</span>
                       </h4>
                       <button
                         onClick={handleApplyParsedData}
                         disabled={parsedRows.filter(r => r.matchedTenantId).length === 0}
-                        className="px-4 py-1.5 bg-green-500 hover:bg-green-400 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider cursor-pointer disabled:opacity-40"
+                        className="px-4 py-1.5 bg-green-500 hover:bg-green-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider cursor-pointer disabled:opacity-40 shadow-md"
                       >
-                        Confirm & Fill Table
+                        Apply Parsed Values
                       </button>
                     </div>
 
-                    <div className="max-h-60 overflow-y-auto border border-white/10 rounded-xl bg-slate-950/60">
+                    <div className="max-h-60 overflow-y-auto border border-white/10 rounded-2xl bg-[#0A0A0A]">
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-white/5 text-[10px] uppercase font-bold text-slate-400 border-b border-white/10 sticky top-0 bg-[#121212]">
+                        <thead className="bg-white/5 text-[10px] uppercase font-bold text-slate-400 border-b border-white/10 sticky top-0 bg-[#111111]">
                           <tr>
-                            <th className="px-3 py-2">Row Line</th>
+                            <th className="px-3 py-2">Raw Line</th>
                             <th className="px-3 py-2">Matched Tenant</th>
                             <th className="px-3 py-2">Pasted Elec</th>
                             <th className="px-3 py-2">Pasted Water</th>
-                            <th className="px-3 py-2">Status / Warnings</th>
+                            <th className="px-3 py-2">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 font-mono text-[11px]">
@@ -506,7 +494,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                                 <select
                                   value={row.matchedTenantId || ''}
                                   onChange={e => handleUpdateParsedRowTenant(idx, e.target.value)}
-                                  className="bg-slate-900 border border-white/10 rounded px-2 py-1 text-xs text-white"
+                                  className="bg-slate-900 border border-white/10 rounded-xl px-2 py-1 text-xs text-white"
                                 >
                                   <option value="">-- Unmatched --</option>
                                   {tenants.map(t => (
@@ -539,288 +527,290 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Global Toolbar & Filters */}
-        <div className="bg-[#111111] border border-white/10 rounded-2xl p-4 space-y-4 shadow-xl">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            
-            {/* Quick Fill Action Buttons */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-1 hidden sm:inline">
-                Global Actions:
-              </span>
-              
-              <button
-                onClick={() => handleQuickAction('reset_prev')}
-                className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                <span>Reset All to Previous</span>
-              </button>
+        {/* 3. Second Row: +5 All Elec | +1 All Water | Clear All */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <button
+            onClick={() => handleQuickAction('add5_elec')}
+            className="p-3 bg-[#111111] hover:bg-amber-500/10 border border-amber-500/20 rounded-2xl font-extrabold text-xs uppercase tracking-wider text-amber-400 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+          >
+            <Zap className="w-4 h-4 text-amber-400" />
+            <span>+5 All Elec</span>
+          </button>
 
-              <button
-                onClick={() => handleQuickAction('add5_elec')}
-                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-[10px] font-bold uppercase tracking-wider text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>+5 to All Elec</span>
-              </button>
+          <button
+            onClick={() => handleQuickAction('add1_water')}
+            className="p-3 bg-[#111111] hover:bg-cyan-500/10 border border-cyan-500/20 rounded-2xl font-extrabold text-xs uppercase tracking-wider text-cyan-400 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+          >
+            <Droplets className="w-4 h-4 text-cyan-400" />
+            <span>+1 All Water</span>
+          </button>
 
-              <button
-                onClick={() => handleQuickAction('add1_water')}
-                className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 rounded-xl text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Droplets className="w-3.5 h-3.5" />
-                <span>+1 to All Water</span>
-              </button>
+          <button
+            onClick={() => handleQuickAction('clear_all')}
+            className="p-3 bg-[#111111] hover:bg-red-500/10 border border-red-500/20 rounded-2xl font-extrabold text-xs uppercase tracking-wider text-red-400 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+          >
+            <Trash2 className="w-4 h-4 text-red-400" />
+            <span>Clear All</span>
+          </button>
+        </div>
 
-              <button
-                onClick={() => handleQuickAction('clear_all')}
-                className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-[10px] font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition-all cursor-pointer"
-              >
-                Clear All
-              </button>
+        {/* 4. Filters: Search + Property Dropdown + Sort */}
+        <div className="bg-[#111111] border border-white/10 rounded-2xl p-4 shadow-xl">
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1 w-full">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search tenant name or room number..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-[#181818] border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+              />
             </div>
 
-            {/* Filter controls */}
-            <div className="flex items-center gap-2 w-full lg:w-auto">
-              <div className="relative flex-1 lg:w-48">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder="Filter name or room..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
-                />
-              </div>
+            {/* Property Filter Dropdown */}
+            <select
+              value={selectedPropertyId}
+              onChange={e => setSelectedPropertyId(e.target.value)}
+              className="w-full sm:w-48 bg-[#181818] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="all">All Properties</option>
+              {properties.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
 
-              {properties.length > 1 && (
-                <select
-                  value={selectedPropertyId}
-                  onChange={e => setSelectedPropertyId(e.target.value)}
-                  className="bg-slate-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
-                >
-                  <option value="all">All Properties</option>
-                  {properties.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              )}
-
-              <select
-                value={sortOrder}
-                onChange={e => setSortOrder(e.target.value as any)}
-                className="bg-slate-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
-              >
-                <option value="room-asc">Sort: Room ↑</option>
-                <option value="room-desc">Sort: Room ↓</option>
-                <option value="name-asc">Sort: Name</option>
-              </select>
-            </div>
+            {/* Sort Dropdown */}
+            <select
+              value={sortOrder}
+              onChange={e => setSortOrder(e.target.value as any)}
+              className="w-full sm:w-44 bg-[#181818] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="room-asc">Room Number ↑</option>
+              <option value="room-desc">Room Number ↓</option>
+              <option value="name-asc">Tenant Name</option>
+            </select>
           </div>
         </div>
 
-        {/* Dedicated Full Page Table Grid */}
-        <div className="bg-[#111111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[750px]">
-              <thead className="bg-white/5 border-b border-white/10 text-[10px] uppercase font-mono font-bold text-slate-400">
-                <tr>
-                  <th className="px-5 py-4 w-56">Tenant / Room</th>
-                  <th className="px-4 py-4 w-28 text-slate-500">Prev Elec</th>
-                  <th className="px-5 py-4 min-w-[200px]">Current Elec Reading</th>
-                  <th className="px-4 py-4 w-28 text-slate-500">Prev Water</th>
-                  <th className="px-5 py-4 min-w-[200px]">Current Water Reading</th>
-                  <th className="px-5 py-4 text-right">Units & Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredSortedTenants.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-12 text-slate-500 text-xs">
-                      No tenants found matching your filter criteria.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredSortedTenants.map((t) => {
-                    const r = readings[t.id] || { currElec: t.currElecReading, currWater: t.currWaterReading };
-                    const elecUnits = Math.max(0, r.currElec - t.prevElecReading);
-                    const waterUnits = Math.max(0, r.currWater - t.prevWaterReading);
-                    
-                    const isElecDecreased = r.currElec < t.prevElecReading;
-                    const isWaterDecreased = r.currWater < t.prevWaterReading;
-                    const isEdited = editedTenantIds.has(t.id);
+        {/* 5. Main Area: Vertical Stacked Tenant Cards */}
+        <div className="space-y-4">
+          {filteredSortedTenants.length === 0 ? (
+            <div className="p-12 bg-[#111111] border border-dashed border-white/10 rounded-3xl text-center space-y-2">
+              <Search className="w-8 h-8 text-slate-600 mx-auto" />
+              <h4 className="text-sm font-bold text-white">No tenants match the active filters</h4>
+              <p className="text-xs text-slate-500">Try adjusting your search query or property filter.</p>
+            </div>
+          ) : (
+            filteredSortedTenants.map((t) => {
+              const r = readings[t.id] || { currElec: t.currElecReading, currWater: t.currWaterReading };
+              const prop = properties.find(p => p.id === t.propertyId);
+              
+              const elecUnits = Math.max(0, r.currElec - t.prevElecReading);
+              const waterUnits = Math.max(0, r.currWater - t.prevWaterReading);
+              
+              const isElecDecreased = r.currElec < t.prevElecReading;
+              const isWaterDecreased = r.currWater < t.prevWaterReading;
+              const isEdited = editedTenantIds.has(t.id);
 
-                    return (
-                      <tr 
-                        key={t.id} 
-                        className={`transition-colors hover:bg-white/[0.02] ${
-                          isEdited ? 'bg-amber-500/[0.02]' : ''
-                        }`}
-                      >
-                        {/* Tenant Name & Room Number */}
-                        <td className="px-5 py-4 sticky left-0 bg-[#111111]/90 backdrop-blur-md">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded">
-                              RM {t.roomNumber}
+              return (
+                <div 
+                  key={t.id}
+                  className={`bg-[#111111] border rounded-3xl p-5 space-y-4 transition-all shadow-lg ${
+                    isEdited 
+                      ? 'border-amber-500/30 bg-[#141414]' 
+                      : 'border-white/10 hover:border-white/20'
+                  }`}
+                >
+                  {/* Card Header: Room Number, Tenant Name, Property, Base Rent & Calculated Units Badges */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                    <div className="flex items-center gap-3">
+                      <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono text-xs font-black rounded-xl shrink-0">
+                        RM {t.roomNumber}
+                      </span>
+                      <div>
+                        <h3 className="text-base font-extrabold text-white leading-tight flex items-center gap-2">
+                          {t.name}
+                          {isEdited && (
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                              Edited
                             </span>
-                            <div>
-                              <p className="font-bold text-white text-xs leading-tight">{t.name}</p>
-                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">Rent: ${t.rent}</p>
-                            </div>
-                          </div>
-                        </td>
+                          )}
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {prop?.name || 'Property'} • Contract Rent: <span className="text-slate-200 font-bold">${t.rent}</span>
+                        </p>
+                      </div>
+                    </div>
 
-                        {/* Previous Electric */}
-                        <td className="px-4 py-4 font-mono text-slate-500 text-xs">
-                          {t.prevElecReading}
-                        </td>
+                    {/* Calculated Units Badges */}
+                    <div className="flex items-center gap-2 font-mono text-xs self-start sm:self-auto">
+                      <span className={`px-2.5 py-1 rounded-xl font-bold border ${
+                        isElecDecreased ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                      }`}>
+                        ⚡ +{elecUnits} U
+                      </span>
+                      <span className={`px-2.5 py-1 rounded-xl font-bold border ${
+                        isWaterDecreased ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+                      }`}>
+                        💧 +{waterUnits} U
+                      </span>
+                    </div>
+                  </div>
 
-                        {/* Current Electric Input */}
-                        <td className="px-5 py-4">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                step="any"
-                                value={r.currElec}
-                                onChange={e => handleCellUpdate(t.id, 'currElec', parseFloat(e.target.value))}
-                                className={`w-full bg-slate-900 border rounded-xl px-3 py-2 font-mono text-sm font-bold text-amber-400 focus:outline-none focus:ring-2 transition-all ${
-                                  isElecDecreased 
-                                    ? 'border-red-500/50 focus:ring-red-500/50 bg-red-500/5' 
-                                    : 'border-white/10 focus:ring-amber-500/50'
-                                }`}
-                              />
-                              <div className="flex flex-col gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCellUpdate(t.id, 'currElec', r.currElec + 5)}
-                                  className="px-1.5 py-0.5 bg-white/5 hover:bg-white/10 text-amber-400 text-[9px] font-mono font-bold rounded cursor-pointer"
-                                  title="Add +5 units"
-                                >
-                                  +5
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCellUpdate(t.id, 'currElec', r.currElec + 10)}
-                                  className="px-1.5 py-0.5 bg-white/5 hover:bg-white/10 text-amber-400 text-[9px] font-mono font-bold rounded cursor-pointer"
-                                  title="Add +10 units"
-                                >
-                                  +10
-                                </button>
-                              </div>
-                            </div>
+                  {/* Prominent Input Grid: Electricity & Water Side-by-Side on Desktop */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    
+                    {/* Electricity Input Block */}
+                    <div className="bg-[#181818] p-4 rounded-2xl border border-white/5 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5" /> Electricity Reading
+                        </span>
+                        <span className="font-mono text-slate-400 text-[11px]">
+                          Prev: <strong className="text-slate-200 font-bold">{t.prevElecReading}</strong>
+                        </span>
+                      </div>
 
-                            {isElecDecreased && (
-                              <p className="text-[10px] text-red-400 font-mono flex items-center gap-1">
-                                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                                Lower than prev ({t.prevElecReading})
-                              </p>
-                            )}
-                          </div>
-                        </td>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          step="any"
+                          value={r.currElec}
+                          onChange={e => handleCellUpdate(t.id, 'currElec', parseFloat(e.target.value))}
+                          className={`w-full bg-[#0D0D0D] border rounded-xl px-4 py-2.5 font-mono text-lg font-black text-amber-300 focus:outline-none transition-all ${
+                            isElecDecreased 
+                              ? 'border-red-500/60 bg-red-500/10 focus:border-red-500' 
+                              : 'border-white/10 focus:border-amber-500'
+                          }`}
+                        />
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currElec', r.currElec + 1)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-amber-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +1 unit"
+                          >
+                            +1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currElec', r.currElec + 5)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-amber-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +5 units"
+                          >
+                            +5
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currElec', r.currElec + 10)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-amber-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +10 units"
+                          >
+                            +10
+                          </button>
+                        </div>
+                      </div>
 
-                        {/* Previous Water */}
-                        <td className="px-4 py-4 font-mono text-slate-500 text-xs">
-                          {t.prevWaterReading}
-                        </td>
+                      {isElecDecreased && (
+                        <p className="text-[11px] text-red-400 font-mono flex items-center gap-1 pt-1">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          Reading is lower than previous ({t.prevElecReading})
+                        </p>
+                      )}
+                    </div>
 
-                        {/* Current Water Input */}
-                        <td className="px-5 py-4">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                step="any"
-                                value={r.currWater}
-                                onChange={e => handleCellUpdate(t.id, 'currWater', parseFloat(e.target.value))}
-                                className={`w-full bg-slate-900 border rounded-xl px-3 py-2 font-mono text-sm font-bold text-cyan-400 focus:outline-none focus:ring-2 transition-all ${
-                                  isWaterDecreased 
-                                    ? 'border-red-500/50 focus:ring-red-500/50 bg-red-500/5' 
-                                    : 'border-white/10 focus:ring-cyan-500/50'
-                                }`}
-                              />
-                              <div className="flex flex-col gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCellUpdate(t.id, 'currWater', r.currWater + 1)}
-                                  className="px-1.5 py-0.5 bg-white/5 hover:bg-white/10 text-cyan-400 text-[9px] font-mono font-bold rounded cursor-pointer"
-                                  title="Add +1 unit"
-                                >
-                                  +1
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCellUpdate(t.id, 'currWater', r.currWater + 5)}
-                                  className="px-1.5 py-0.5 bg-white/5 hover:bg-white/10 text-cyan-400 text-[9px] font-mono font-bold rounded cursor-pointer"
-                                  title="Add +5 units"
-                                >
-                                  +5
-                                </button>
-                              </div>
-                            </div>
+                    {/* Water Input Block */}
+                    <div className="bg-[#181818] p-4 rounded-2xl border border-white/5 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-extrabold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                          <Droplets className="w-3.5 h-3.5" /> Water Reading
+                        </span>
+                        <span className="font-mono text-slate-400 text-[11px]">
+                          Prev: <strong className="text-slate-200 font-bold">{t.prevWaterReading}</strong>
+                        </span>
+                      </div>
 
-                            {isWaterDecreased && (
-                              <p className="text-[10px] text-red-400 font-mono flex items-center gap-1">
-                                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                                Lower than prev ({t.prevWaterReading})
-                              </p>
-                            )}
-                          </div>
-                        </td>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          step="any"
+                          value={r.currWater}
+                          onChange={e => handleCellUpdate(t.id, 'currWater', parseFloat(e.target.value))}
+                          className={`w-full bg-[#0D0D0D] border rounded-xl px-4 py-2.5 font-mono text-lg font-black text-cyan-300 focus:outline-none transition-all ${
+                            isWaterDecreased 
+                              ? 'border-red-500/60 bg-red-500/10 focus:border-red-500' 
+                              : 'border-white/10 focus:border-cyan-500'
+                          }`}
+                        />
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currWater', r.currWater + 1)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-cyan-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +1 unit"
+                          >
+                            +1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currWater', r.currWater + 2)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-cyan-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +2 units"
+                          >
+                            +2
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCellUpdate(t.id, 'currWater', r.currWater + 5)}
+                            className="px-2.5 py-2.5 bg-[#222222] hover:bg-white/10 border border-white/10 text-cyan-400 text-xs font-mono font-bold rounded-xl transition-colors cursor-pointer"
+                            title="Add +5 units"
+                          >
+                            +5
+                          </button>
+                        </div>
+                      </div>
 
-                        {/* Calculated Units & Badge */}
-                        <td className="px-5 py-4 text-right">
-                          <div className="flex flex-col items-end gap-1">
-                            <div className="flex items-center gap-2 font-mono text-xs">
-                              <span className="text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
-                                ⚡ +{elecUnits} U
-                              </span>
-                              <span className="text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded">
-                                💧 +{waterUnits} U
-                              </span>
-                            </div>
-                            {isEdited && (
-                              <span className="text-[9px] uppercase tracking-wider font-bold text-amber-500/80">
-                                ● Modified
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                      {isWaterDecreased && (
+                        <p className="text-[11px] text-red-400 font-mono flex items-center gap-1 pt-1">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          Reading is lower than previous ({t.prevWaterReading})
+                        </p>
+                      )}
+                    </div>
 
-          {/* Bottom Table Footer */}
-          <div className="p-4 bg-white/[0.02] border-t border-white/10 flex flex-wrap items-center justify-between gap-4">
-            <div className="text-xs text-slate-400">
-              Showing <span className="text-white font-bold">{filteredSortedTenants.length}</span> of {tenants.length} tenants.
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onBack}
-                className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-300 cursor-pointer transition-all"
-              >
-                Cancel & Discard
-              </button>
-              <button
-                onClick={handleApplyAll}
-                className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest cursor-pointer shadow-lg transition-all"
-              >
-                Apply All Meter Readings
-              </button>
-            </div>
-          </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
 
       </main>
+
+      {/* 6. Sticky Bottom Action Bar */}
+      <footer className="fixed bottom-0 left-0 right-0 z-30 bg-[#111111]/95 backdrop-blur-xl border-t border-white/10 px-4 py-3.5 sm:px-8 shadow-2xl">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+          <button
+            onClick={onBack}
+            className="px-5 py-2.5 bg-[#181818] hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-wider text-slate-300 cursor-pointer transition-all"
+          >
+            Cancel & Discard
+          </button>
+
+          <button
+            onClick={handleApplyAll}
+            className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest cursor-pointer shadow-lg shadow-amber-500/20 transition-all flex items-center gap-2"
+          >
+            <Check className="w-4 h-4 stroke-[3]" />
+            <span>Apply All Meter Readings</span>
+          </button>
+        </div>
+      </footer>
+
     </div>
   );
 };
