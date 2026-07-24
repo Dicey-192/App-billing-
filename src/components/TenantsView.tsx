@@ -6,12 +6,13 @@ import {
   AlertCircle, FileText, CheckCircle2, List, Home, History, 
   Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, 
   MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, 
-  Check, Bell, ShieldAlert, Sparkles, SlidersHorizontal, Info, Zap
+  Check, Bell, ShieldAlert, Sparkles, SlidersHorizontal, Info, Zap, RotateCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface TenantsViewProps {
   tenants: Tenant[];
+  allTenants?: Tenant[];
   properties: Property[];
   selectedPropertyId: string;
   setSelectedPropertyId: (id: string) => void;
@@ -20,6 +21,7 @@ interface TenantsViewProps {
   statusFilter: string;
   setStatusFilter: (s: string) => void;
   updateTenant: (id: string, updates: any) => void;
+  updateTenants?: (updates: { id: string; updates: Partial<Tenant> }[]) => void;
   deleteTenant: (id: string) => void;
   setTenantModal: (modal: any) => void;
   downloadSummaryCSV: () => void;
@@ -40,10 +42,13 @@ interface TenantsViewProps {
   downloadReceipt?: (tenant: any) => Promise<void>;
   handleBulkDownload?: () => Promise<void>;
   printAllReceipts?: () => void;
+  addAuditLog?: (tenantId: string, tenantName: string, month: string, fieldName: string, oldValue: string, newValue: string) => void;
+  showToast?: (msg: string, type?: any) => void;
 }
 
 export const TenantsView: React.FC<TenantsViewProps> = ({
   tenants,
+  allTenants,
   properties,
   selectedPropertyId,
   setSelectedPropertyId,
@@ -52,6 +57,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   statusFilter,
   setStatusFilter,
   updateTenant,
+  updateTenants,
   deleteTenant,
   setTenantModal,
   downloadSummaryCSV,
@@ -71,10 +77,68 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   recalculateBalances,
   downloadReceipt,
   handleBulkDownload,
-  printAllReceipts
+  printAllReceipts,
+  addAuditLog,
+  showToast
 }) => {
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Rollover Readings handler
+  const handleRolloverReadings = () => {
+    const confirmed = window.confirm(
+      "This will set current readings as previous and prepare for new entries. Continue?"
+    );
+    if (!confirmed) return;
+
+    const targetTenants = (allTenants && allTenants.length > 0) ? allTenants : tenants;
+
+    if (targetTenants.length === 0) {
+      if (showToast) showToast("No tenants available for rollover.");
+      return;
+    }
+
+    const updates = targetTenants.map(t => ({
+      id: t.id,
+      updates: {
+        prevElecReading: t.currElecReading,
+        currElecReading: t.currElecReading,
+        prevWaterReading: t.currWaterReading,
+        currWaterReading: t.currWaterReading,
+        manualOverrides: t.manualOverrides ? {
+          ...t.manualOverrides,
+          electricityCharges: undefined,
+          waterCharges: undefined
+        } : undefined
+      }
+    }));
+
+    if (updateTenants) {
+      updateTenants(updates);
+    } else {
+      updates.forEach(u => updateTenant(u.id, u.updates));
+    }
+
+    // Log action in audit trail
+    targetTenants.forEach(t => {
+      addAuditLog?.(
+        t.id,
+        t.name,
+        activeMonth || 'Current Cycle',
+        'Rollover Readings',
+        `Elec Prev: ${t.prevElecReading}, Curr: ${t.currElecReading} | Water Prev: ${t.prevWaterReading}, Curr: ${t.currWaterReading}`,
+        `Rolled Over - Elec Prev: ${t.currElecReading}, Curr: ${t.currElecReading} | Water Prev: ${t.currWaterReading}, Curr: ${t.currWaterReading}`
+      );
+    });
+
+    if (recalculateBalances) {
+      recalculateBalances();
+    }
+
+    if (showToast) {
+      showToast("Readings rolled over successfully. Ready for new entries.");
+    }
+  };
 
   // Filter calculation count
   const filterCount = useMemo(() => {
@@ -215,6 +279,15 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
               )}
             </div>
           )}
+
+          <button
+            onClick={handleRolloverReadings}
+            className="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm"
+            title="Rollover electric and water readings for all tenants"
+          >
+            <RotateCw className="w-3.5 h-3.5 text-amber-400" />
+            Rollover Readings
+          </button>
 
           <button
             onClick={() => setBulkTableModal({ open: true })}

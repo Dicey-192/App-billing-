@@ -1812,6 +1812,7 @@ export default function App() {
             {currentView === 'tenants' && (
               <TenantsView 
                 tenants={filteredTenants}
+                allTenants={tenants}
                 properties={properties}
                 selectedPropertyId={selectedPropertyId}
                 setSelectedPropertyId={setSelectedPropertyId}
@@ -1820,6 +1821,7 @@ export default function App() {
                 statusFilter={statusFilter}
                 setStatusFilter={setStatusFilter}
                 updateTenant={updateTenant}
+                updateTenants={updateTenants}
                 deleteTenant={handleDeleteTenant}
                 setTenantModal={setTenantModal}
                 downloadSummaryCSV={downloadSummaryCSV}
@@ -1844,6 +1846,8 @@ export default function App() {
                 downloadReceipt={downloadReceipt}
                 handleBulkDownload={handleBulkDownload}
                 printAllReceipts={handleBulkPrint}
+                addAuditLog={addAuditLog}
+                showToast={showToast}
               />
             )}
             {currentView === 'payments' && (
