@@ -142,6 +142,105 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
     }
   };
 
+  // Export CSV Handler
+  const handleExportCSV = () => {
+    const targetList = selectedTenantIds.size > 0 
+      ? filteredTenants.filter(t => selectedTenantIds.has(t.id))
+      : filteredTenants;
+
+    if (targetList.length === 0) {
+      if (showToast) showToast("No tenants available to export.", "error");
+      return;
+    }
+
+    const headers = [
+      "Property",
+      "Tenant Name",
+      "Phone",
+      "Room",
+      "Base Rent",
+      "Elec Prev Reading",
+      "Elec Curr Reading",
+      "Elec Units",
+      "Elec Charges",
+      "Water Prev Reading",
+      "Water Curr Reading",
+      "Water Units",
+      "Water Charges",
+      "Other Fees",
+      "Opening Balance / Arrears",
+      "Total Due",
+      "Paid Amount",
+      "Outstanding Balance",
+      "Status"
+    ];
+
+    const escapeCSV = (val: any) => {
+      if (val === undefined || val === null) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    let csvContent = headers.map(escapeCSV).join(",") + "\n";
+
+    targetList.forEach(t => {
+      const prop = properties.find(p => p.id === t.propertyId);
+      const b = prop ? getTenantBillingDetails(t, prop) : {
+        baseRent: t.rent,
+        elecUnits: Math.max(0, t.currElecReading - t.prevElecReading),
+        electricityCharges: 0,
+        waterUnits: Math.max(0, t.currWaterReading - t.prevWaterReading),
+        waterCharges: 0,
+        otherFees: 0,
+        openingBalance: t.previousDues || 0,
+        totalDue: 0,
+        paidAmount: t.paidAmount || 0,
+        outstandingBalance: 0
+      };
+
+      const status = b.outstandingBalance <= 0 ? "Paid" : b.paidAmount > 0 ? "Partial" : "Unpaid";
+
+      const row = [
+        prop?.name || "N/A",
+        t.name,
+        t.phone || "",
+        t.roomNumber,
+        b.baseRent,
+        t.prevElecReading,
+        t.currElecReading,
+        b.elecUnits,
+        b.electricityCharges,
+        t.prevWaterReading,
+        t.currWaterReading,
+        b.waterUnits,
+        b.waterCharges,
+        b.otherFees,
+        b.openingBalance,
+        b.totalDue,
+        b.paidAmount,
+        b.outstandingBalance,
+        status
+      ];
+
+      csvContent += row.map(escapeCSV).join(",") + "\n";
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.download = `tenants_ledger_${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    if (showToast) {
+      showToast(`Exported CSV for ${targetList.length} tenant(s)`, "success");
+    }
+  };
+
   // Filter calculation count
   const filterCount = useMemo(() => {
     let count = 0;
@@ -279,8 +378,25 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
                   Print
                 </button>
               )}
+              <button
+                onClick={handleExportCSV}
+                className="px-2 py-1 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[9px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5 cursor-pointer"
+                title="Export selected tenants CSV"
+              >
+                <Download className="w-3 h-3 text-emerald-400" />
+                CSV
+              </button>
             </div>
           )}
+
+          <button
+            onClick={handleExportCSV}
+            className="px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm"
+            title="Export tenants page data as CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            Export CSV
+          </button>
 
           <button
             onClick={handleRolloverReadings}

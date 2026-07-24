@@ -1400,25 +1400,97 @@ export default function App() {
   };
 
   const downloadSummaryCSV = () => {
-    const propertyTenants = tenants.filter(t => selectedPropertyId === 'all' || t.propertyId === selectedPropertyId);
-    let csv = "Name,Room,Rent,Elec Units,Water Units,Total Extra,Prev Dues,Total Due,Status\n";
+    const propertyTenants = tenants.filter(t => selectedPropertyId === 'all' || !selectedPropertyId || t.propertyId === selectedPropertyId);
     
+    if (propertyTenants.length === 0) {
+      showToast("No tenants available to export");
+      return;
+    }
+
+    const headers = [
+      "Property",
+      "Tenant Name",
+      "Phone",
+      "Room",
+      "Base Rent",
+      "Elec Prev Reading",
+      "Elec Curr Reading",
+      "Elec Units",
+      "Elec Charges",
+      "Water Prev Reading",
+      "Water Curr Reading",
+      "Water Units",
+      "Water Charges",
+      "Other Fees",
+      "Opening Balance / Arrears",
+      "Total Due",
+      "Paid Amount",
+      "Outstanding Balance",
+      "Status"
+    ];
+
+    const escapeCSV = (val: any) => {
+      if (val === undefined || val === null) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    let csvContent = headers.map(escapeCSV).join(",") + "\n";
+
     propertyTenants.forEach(t => {
-      const prop = properties.find(p => p.id === t.propertyId)!;
-      const elecUnits = Math.max(0, t.currElecReading - t.prevElecReading);
-      const waterUnits = Math.max(0, t.currWaterReading - t.prevWaterReading);
-      const totalExtra = t.expenses.reduce((acc, exp) => acc + exp.amount, 0);
-      const totalDue = t.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra + t.previousDues;
-      
-      csv += `${t.name},${t.roomNumber},${t.rent},${elecUnits},${waterUnits},${totalExtra},${t.previousDues},${totalDue},${t.isPaid ? 'Paid' : 'Unpaid'}\n`;
+      const prop = properties.find(p => p.id === t.propertyId);
+      const b = prop ? getTenantBillingDetails(t, prop) : {
+        baseRent: t.rent,
+        elecUnits: Math.max(0, t.currElecReading - t.prevElecReading),
+        electricityCharges: 0,
+        waterUnits: Math.max(0, t.currWaterReading - t.prevWaterReading),
+        waterCharges: 0,
+        otherFees: 0,
+        openingBalance: t.previousDues || 0,
+        totalDue: 0,
+        paidAmount: t.paidAmount || 0,
+        outstandingBalance: 0
+      };
+
+      const status = b.outstandingBalance <= 0 ? "Paid" : b.paidAmount > 0 ? "Partial" : "Unpaid";
+
+      const row = [
+        prop?.name || "N/A",
+        t.name,
+        t.phone || "",
+        t.roomNumber,
+        b.baseRent,
+        t.prevElecReading,
+        t.currElecReading,
+        b.elecUnits,
+        b.electricityCharges,
+        t.prevWaterReading,
+        t.currWaterReading,
+        b.waterUnits,
+        b.waterCharges,
+        b.otherFees,
+        b.openingBalance,
+        b.totalDue,
+        b.paidAmount,
+        b.outstandingBalance,
+        status
+      ];
+
+      csvContent += row.map(escapeCSV).join(",") + "\n";
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `summary_${new Date().toISOString().split('T')[0]}.csv`;
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.download = `tenants_summary_${dateStr}.csv`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(`Exported CSV for ${propertyTenants.length} tenant(s)`);
   };
 
   // Keyboard shortcut search filter logic
