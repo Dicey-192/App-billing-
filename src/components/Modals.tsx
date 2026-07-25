@@ -1845,3 +1845,315 @@ export const EditTenantDetailsModal: React.FC<{
     </Modal>
   );
 };
+
+export const EditTenantContractModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  tenant: Tenant;
+  property: Property;
+  onUpdateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
+  showToast?: (msg: string, type?: string) => void;
+}> = ({ isOpen, onClose, tenant, property, onUpdateTenant, showToast }) => {
+  const elecRate = property?.electricRate || 0;
+  const waterRate = property?.waterRate || 0;
+
+  const [baseRent, setBaseRent] = useState<number>(0);
+  const [prevElec, setPrevElec] = useState<number>(0);
+  const [currElec, setCurrElec] = useState<number>(0);
+  const [elecCharges, setElecCharges] = useState<number>(0);
+
+  const [prevWater, setPrevWater] = useState<number>(0);
+  const [currWater, setCurrWater] = useState<number>(0);
+  const [waterCharges, setWaterCharges] = useState<number>(0);
+
+  const [openingBalance, setOpeningBalance] = useState<number>(0);
+  const [otherFees, setOtherFees] = useState<number>(0);
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+
+  useEffect(() => {
+    if (tenant) {
+      const initRent = tenant.manualOverrides?.baseRent !== undefined ? tenant.manualOverrides.baseRent : (tenant.rent || 0);
+      const pElec = tenant.prevElecReading || 0;
+      const cElec = tenant.currElecReading || 0;
+      const eCharges = tenant.manualOverrides?.electricityCharges !== undefined 
+        ? tenant.manualOverrides.electricityCharges 
+        : Math.max(0, cElec - pElec) * elecRate;
+
+      const pWater = tenant.prevWaterReading || 0;
+      const cWater = tenant.currWaterReading || 0;
+      const wCharges = tenant.manualOverrides?.waterCharges !== undefined 
+        ? tenant.manualOverrides.waterCharges 
+        : Math.max(0, cWater - pWater) * waterRate;
+
+      const oBal = tenant.manualOverrides?.openingBalance !== undefined ? tenant.manualOverrides.openingBalance : (tenant.previousDues || 0);
+      const oFees = tenant.manualOverrides?.otherFees !== undefined ? tenant.manualOverrides.otherFees : ((tenant.expenses || []).reduce((s, e) => s + e.amount, 0));
+      const pAmt = tenant.manualOverrides?.paidAmount !== undefined ? tenant.manualOverrides.paidAmount : (tenant.paidAmount || 0);
+
+      setBaseRent(initRent);
+      setPrevElec(pElec);
+      setCurrElec(cElec);
+      setElecCharges(eCharges);
+      setPrevWater(pWater);
+      setCurrWater(cWater);
+      setWaterCharges(wCharges);
+      setOpeningBalance(oBal);
+      setOtherFees(oFees);
+      setPaidAmount(pAmt);
+    }
+  }, [tenant, property, isOpen, elecRate, waterRate]);
+
+  const handleElecReadingChange = (pVal: number, cVal: number) => {
+    setPrevElec(pVal);
+    setCurrElec(cVal);
+    const u = Math.max(0, cVal - pVal);
+    setElecCharges(u * elecRate);
+  };
+
+  const handleWaterReadingChange = (pVal: number, cVal: number) => {
+    setPrevWater(pVal);
+    setCurrWater(cVal);
+    const u = Math.max(0, cVal - pVal);
+    setWaterCharges(u * waterRate);
+  };
+
+  const elecUnits = Math.max(0, currElec - prevElec);
+  const waterUnits = Math.max(0, currWater - prevWater);
+
+  const totalPeriodBilling = baseRent + elecCharges + waterCharges + otherFees + openingBalance;
+  const remainingOutstanding = totalPeriodBilling - paidAmount;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenant) return;
+    const isPaid = paidAmount >= totalPeriodBilling;
+
+    onUpdateTenant(tenant.id, {
+      rent: baseRent,
+      prevElecReading: prevElec,
+      currElecReading: currElec,
+      prevWaterReading: prevWater,
+      currWaterReading: currWater,
+      previousDues: openingBalance,
+      paidAmount: paidAmount,
+      isPaid: isPaid,
+      manualOverrides: {
+        baseRent,
+        electricityCharges: elecCharges,
+        waterCharges: waterCharges,
+        openingBalance,
+        otherFees,
+        totalDue: totalPeriodBilling,
+        paidAmount,
+        isPaid
+      }
+    });
+
+    if (showToast) {
+      showToast('Tenant contract & billing details updated successfully');
+    }
+    onClose();
+  };
+
+  if (!tenant) return null;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Edit Tenant Contract — ${tenant.name}`}>
+      <form onSubmit={handleSubmit} className="space-y-5 max-h-[75vh] overflow-y-auto pr-1">
+        
+        {/* Contract Base Rent */}
+        <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-2">
+          <label className="text-xs uppercase font-extrabold text-amber-400 tracking-wider block">
+            Contract Base Rent (₹)
+          </label>
+          <input
+            type="number"
+            required
+            step="any"
+            value={baseRent}
+            onChange={e => setBaseRent(Number(e.target.value))}
+            className="input bg-[#0D0D0D] border-white/10 font-mono text-base font-bold text-white w-full focus:border-amber-500"
+          />
+        </div>
+
+        {/* Electricity Charges Section */}
+        <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            <span className="text-xs uppercase font-extrabold text-amber-400 tracking-wider flex items-center gap-1.5">
+              ⚡ Electricity Charges
+            </span>
+            <span className="text-[11px] font-mono text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/20">
+              Readings: {prevElec} → {currElec} ({elecUnits} Units @ ₹{elecRate.toFixed(2)}/U)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+                Previous Reading
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={prevElec}
+                onChange={e => handleElecReadingChange(Number(e.target.value), currElec)}
+                className="input bg-[#0D0D0D] border-white/10 font-mono text-xs text-white w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+                Current Reading
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={currElec}
+                onChange={e => handleElecReadingChange(prevElec, Number(e.target.value))}
+                className="input bg-[#0D0D0D] border-white/10 font-mono text-xs text-white w-full"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+              Calculated / Override Electricity Charge (₹)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={elecCharges}
+              onChange={e => setElecCharges(Number(e.target.value))}
+              className="input bg-[#0D0D0D] border-white/10 font-mono text-sm font-bold text-amber-300 w-full"
+            />
+          </div>
+        </div>
+
+        {/* Water Charges Section */}
+        <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            <span className="text-xs uppercase font-extrabold text-cyan-400 tracking-wider flex items-center gap-1.5">
+              💧 Water Charges
+            </span>
+            <span className="text-[11px] font-mono text-cyan-300 font-bold bg-cyan-500/10 px-2 py-0.5 rounded-lg border border-cyan-500/20">
+              Readings: {prevWater} → {currWater} ({waterUnits} Units @ ₹{waterRate.toFixed(2)}/U)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+                Previous Reading
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={prevWater}
+                onChange={e => handleWaterReadingChange(Number(e.target.value), currWater)}
+                className="input bg-[#0D0D0D] border-white/10 font-mono text-xs text-white w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+                Current Reading
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={currWater}
+                onChange={e => handleWaterReadingChange(prevWater, Number(e.target.value))}
+                className="input bg-[#0D0D0D] border-white/10 font-mono text-xs text-white w-full"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+              Calculated / Override Water Charge (₹)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={waterCharges}
+              onChange={e => setWaterCharges(Number(e.target.value))}
+              className="input bg-[#0D0D0D] border-white/10 font-mono text-sm font-bold text-cyan-300 w-full"
+            />
+          </div>
+        </div>
+
+        {/* Opening Arrears & Other Fees */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-1">
+            <label className="text-[10px] uppercase font-bold text-rose-400 tracking-wider block">
+              Opening Arrears (₹)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={openingBalance}
+              onChange={e => setOpeningBalance(Number(e.target.value))}
+              className="input bg-[#0D0D0D] border-white/10 font-mono text-sm font-bold text-rose-300 w-full"
+            />
+          </div>
+
+          <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-1">
+            <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+              Other Fees & Charges (₹)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={otherFees}
+              onChange={e => setOtherFees(Number(e.target.value))}
+              className="input bg-[#0D0D0D] border-white/10 font-mono text-sm font-bold text-white w-full"
+            />
+          </div>
+        </div>
+
+        {/* Summary Card */}
+        <div className="p-4 bg-[#111111] rounded-2xl border border-white/10 space-y-3 font-mono">
+          <div className="flex justify-between items-center text-xs font-black">
+            <span className="text-white uppercase font-sans">TOTAL PERIOD BILLING</span>
+            <span className="text-base text-white font-bold">₹{totalPeriodBilling.toLocaleString()}</span>
+          </div>
+
+          <div className="flex justify-between items-center text-xs font-black">
+            <span className="text-emerald-400 uppercase font-sans">TOTAL AMOUNT PAID</span>
+            <div className="w-36">
+              <input
+                type="number"
+                step="any"
+                value={paidAmount}
+                onChange={e => setPaidAmount(Number(e.target.value))}
+                className="input bg-[#0D0D0D] border-emerald-500/40 text-emerald-300 font-mono text-right font-bold text-sm w-full py-1 px-2"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center text-xs font-black pt-2 border-t border-white/10">
+            <span className="text-slate-300 uppercase font-sans">REMAINING OUTSTANDING BALANCE</span>
+            <span className={`text-lg font-black ${remainingOutstanding > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              ₹{remainingOutstanding.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold uppercase rounded-xl transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black uppercase rounded-xl transition-colors shadow-lg cursor-pointer"
+          >
+            Save Contract Changes
+          </button>
+        </div>
+
+      </form>
+    </Modal>
+  );
+};

@@ -9,7 +9,7 @@ import {
   Check, Bell, ShieldAlert, Sparkles, SlidersHorizontal, Info, Zap, RotateCw, ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { EditTenantDetailsModal } from './Modals';
+import { EditTenantDetailsModal, EditTenantContractModal } from './Modals';
 
 interface TenantsViewProps {
   tenants: Tenant[];
@@ -87,6 +87,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
   const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
   const [showEditDetailsModal, setShowEditDetailsModal] = useState(false);
+  const [showEditContractModal, setShowEditContractModal] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
   // Rollover Readings handler
@@ -601,11 +602,11 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
             {/* Contract Options / Delete */}
             <div className="bg-[#111111] p-6 rounded-3xl border border-white/5 space-y-3">
               <button
-                onClick={() => setShowEditDetailsModal(true)}
+                onClick={() => setShowEditContractModal(true)}
                 className="w-full py-3 bg-[#181818] hover:bg-white/10 border border-white/10 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Edit2 className="w-4 h-4 text-blue-400" />
-                Edit Tenant Details
+                <FileText className="w-4 h-4 text-amber-400" />
+                Edit Tenant Contract
               </button>
 
               <button
@@ -633,6 +634,19 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
           onUpdateTenant={(tid, updates) => {
             updateTenant(tid, updates);
             if (showToast) showToast('Tenant details updated successfully');
+          }}
+          showToast={showToast}
+        />
+
+        <EditTenantContractModal
+          isOpen={showEditContractModal}
+          onClose={() => setShowEditContractModal(false)}
+          tenant={viewingTenant}
+          property={viewingProperty}
+          onUpdateTenant={(tid, updates) => {
+            updateTenant(tid, updates);
+            if (recalculateBalances) recalculateBalances();
+            if (showToast) showToast('Tenant contract & billing updated successfully');
           }}
           showToast={showToast}
         />
