@@ -6,8 +6,8 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
-import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr } from './lib/utils';
-import { Property, Tenant, AppData, PaymentRecord } from './types';
+import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr, verifyPreviousBillingCycle } from './lib/utils';
+import { Property, Tenant, AppData, PaymentRecord, BillingVerificationIssue } from './types';
 import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload, ExternalLink, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
@@ -348,7 +348,7 @@ const preCacheReceipts = async (tenantsList: any[], monthName: string) => {
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
-import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal } from './components/Modals';
+import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal, BillingVerificationModal } from './components/Modals';
 
 export default function App() {
   const [currentView, setView] = useState<ViewType>('dashboard');
@@ -397,6 +397,96 @@ export default function App() {
 
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkProgressMsg, setBulkProgressMsg] = useState<string>('');
+
+  // Mandatory Billing Cycle Cross-Check Verification States
+  const [verificationErrors, setVerificationErrors] = useState<BillingVerificationIssue[] | null>(null);
+  const [pendingRolloverMonth, setPendingRolloverMonth] = useState<string | null>(null);
+
+  const handleAutoFixVerification = () => {
+    if (!verificationErrors || verificationErrors.length === 0) return;
+
+    const updates: { id: string; updates: Partial<Tenant> }[] = [];
+    
+    for (const err of verificationErrors) {
+      const t = tenants.find(tenant => tenant.id === err.tenantId);
+      if (!t) continue;
+      const prop = properties.find(p => p.id === t.propertyId);
+      if (!prop) continue;
+
+      const recordedPaymentsSum = (t.payments || []).reduce((acc, p) => acc + (p.amount || 0), 0);
+      const billing = getTenantBillingDetails(t, prop);
+
+      let truePaid = recordedPaymentsSum;
+      let currentPayments = [...(t.payments || [])];
+
+      if (currentPayments.length === 0 && (t.paidAmount || 0) > 0) {
+        truePaid = t.paidAmount || 0;
+        const initialRecord: PaymentRecord = {
+          id: generateId(),
+          amount: truePaid,
+          date: Date.now(),
+          note: 'Sync Recreated Payment Record',
+          remainingBalance: Math.max(0, billing.totalDue - truePaid)
+        };
+        currentPayments = [initialRecord];
+      }
+
+      let truePreviousDues = t.previousDues;
+      if (history && history.length > 0) {
+        const propertyHistory = history.filter(h => h.propertyId === t.propertyId);
+        if (propertyHistory.length > 0) {
+          const lastEntry = propertyHistory[0];
+          const histTenant = lastEntry.snapshot.tenants.find((ht: any) => ht.id === t.id);
+          if (histTenant && t.manualOverrides?.openingBalance === undefined) {
+            const histBilling = getTenantBillingDetails(histTenant, lastEntry.snapshot.property);
+            truePreviousDues = histBilling.outstandingBalance;
+          }
+        }
+      }
+
+      const newTotalDue = billing.baseRent + billing.electricityCharges + billing.waterCharges + billing.otherFees + truePreviousDues;
+      const isFullyPaid = truePaid >= newTotalDue;
+
+      let runningPaid = 0;
+      const fixedPayments = currentPayments.map(p => {
+        runningPaid += p.amount;
+        return {
+          ...p,
+          remainingBalance: Math.max(0, newTotalDue - runningPaid)
+        };
+      });
+
+      updates.push({
+        id: t.id,
+        updates: {
+          previousDues: truePreviousDues,
+          paidAmount: truePaid,
+          isPaid: isFullyPaid,
+          payments: fixedPayments,
+          manualOverrides: t.manualOverrides ? {
+            ...t.manualOverrides,
+            openingBalance: truePreviousDues,
+            paidAmount: truePaid,
+            isPaid: isFullyPaid
+          } : undefined
+        }
+      });
+    }
+
+    if (updates.length > 0) {
+      updateTenants(updates);
+      showToast(`Successfully auto-fixed and synchronized records for ${updates.length} tenant(s)!`);
+      setVerificationErrors(null);
+
+      if (pendingRolloverMonth !== null) {
+        const monthToRun = pendingRolloverMonth;
+        setPendingRolloverMonth(null);
+        setTimeout(() => {
+          handleRollover(monthToRun);
+        }, 300);
+      }
+    }
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1207,6 +1297,16 @@ export default function App() {
       return;
     }
 
+    // MANDATORY PREVIOUS-MONTH CROSS-CHECK
+    const check = verifyPreviousBillingCycle(tenants, properties, history);
+    if (!check.valid) {
+      console.warn('[ROLLOVER_BLOCKED] Previous month cross-check failed:', check.errors);
+      setVerificationErrors(check.errors);
+      setPendingRolloverMonth(confirmedMonth || null);
+      showToast('Billing rollover BLOCKED: Calculation discrepancies detected.');
+      return;
+    }
+
     setIsRollingOver(true);
     
     setTimeout(async () => {
@@ -1908,6 +2008,12 @@ export default function App() {
                </AnimatePresence>
               </div>
 
+              {/* Local Private Storage Status Badge */}
+              <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-emerald-400 font-mono text-[10px] font-bold shrink-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>100% LOCAL STORAGE (.rentflo_data/)</span>
+              </div>
+
               {/* User profile with admin display chip */}
               {currentUser && (
                 <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
@@ -2257,6 +2363,13 @@ export default function App() {
           setRolloverPrompt({ ...rolloverPrompt, open: false });
           setUndoStack([]); // Clear undo as requested
         }}
+      />
+
+      <BillingVerificationModal
+        isOpen={!!verificationErrors && verificationErrors.length > 0}
+        errors={verificationErrors || []}
+        onClose={() => setVerificationErrors(null)}
+        onAutoFix={handleAutoFixVerification}
       />
 
       <BulkTableModal
@@ -3625,7 +3738,40 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
                   <button 
                     onClick={() => {
                       pushToUndo();
-                      updateTenant(activeTenant.id, { isPaid: !activeTenant.isPaid });
+                      const willBePaid = !activeTenant.isPaid;
+                      if (willBePaid) {
+                        const detail = getTenantBillingDetails(activeTenant, activeProp);
+                        const dueToPay = detail.outstandingBalance;
+                        const newRecord: PaymentRecord = {
+                          id: generateId(),
+                          amount: dueToPay,
+                          date: Date.now(),
+                          note: 'Marked Fully Paid',
+                          remainingBalance: 0
+                        };
+                        const newPaidAmount = detail.totalDue;
+                        updateTenant(activeTenant.id, {
+                          payments: [...(activeTenant.payments || []), newRecord],
+                          paidAmount: newPaidAmount,
+                          isPaid: true,
+                          manualOverrides: activeTenant.manualOverrides ? {
+                            ...activeTenant.manualOverrides,
+                            paidAmount: newPaidAmount,
+                            isPaid: true
+                          } : undefined
+                        });
+                      } else {
+                        updateTenant(activeTenant.id, {
+                          payments: [],
+                          paidAmount: 0,
+                          isPaid: false,
+                          manualOverrides: activeTenant.manualOverrides ? {
+                            ...activeTenant.manualOverrides,
+                            paidAmount: 0,
+                            isPaid: false
+                          } : undefined
+                        });
+                      }
                     }}
                     className={cn(
                       "w-11 h-11 rounded-full border transition-all flex items-center justify-center cursor-pointer shadow-md group",

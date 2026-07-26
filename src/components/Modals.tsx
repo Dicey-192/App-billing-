@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot, ManualOverrides } from '../types';
+import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot, ManualOverrides, BillingVerificationIssue } from '../types';
 import { generateId, cn, formatCurrency, getTenantBillingDetails } from '../lib/utils';
-import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2 } from 'lucide-react';
+import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ModalProps {
@@ -753,38 +753,36 @@ export const PaymentModal: React.FC<{
 
   const billingDetails = useMemo(() => {
     if (!activeTenant || !activeProperty) return null;
-    const elecUnits = Math.max(0, activeTenant.currElecReading - activeTenant.prevElecReading);
-    const waterUnits = Math.max(0, activeTenant.currWaterReading - activeTenant.prevWaterReading);
-    const totalExtra = (activeTenant.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
-    const totalDue = activeTenant.rent + (elecUnits * activeProperty.electricRate) + (waterUnits * activeProperty.waterRate) + totalExtra + activeTenant.previousDues;
-    const currentPaid = activeTenant.paidAmount || 0;
-    const balance = totalDue - currentPaid;
-    return {
-      totalDue,
-      currentPaid,
-      balance
-    };
+    return getTenantBillingDetails(activeTenant, activeProperty);
   }, [activeTenant, activeProperty]);
 
   const handleAddPayment = () => {
-    if (!activeTenant || amount <= 0) return;
+    if (!activeTenant || !activeProperty || amount <= 0) return;
     
+    const billing = getTenantBillingDetails(activeTenant, activeProperty);
+    const totalDue = billing.totalDue;
+    const currentPaid = billing.paidAmount;
+    const newPaidAmount = currentPaid + amount;
+    const remainingBalance = Math.max(0, totalDue - newPaidAmount);
+    const isFullyPaid = remainingBalance <= 0;
+
     const newRecord: PaymentRecord = {
       id: generateId(),
       amount: amount,
       date: Date.now(),
-      note: note
+      note: note || 'Payment Received',
+      remainingBalance: remainingBalance
     };
-
-    const currentPaid = activeTenant.paidAmount || 0;
-    const totalDue = billingDetails?.totalDue || activeTenant.rent;
-    const newPaidAmount = currentPaid + amount;
-    const isFullyPaid = newPaidAmount >= totalDue;
 
     onSave(activeTenant.id, {
       payments: [...(activeTenant.payments || []), newRecord],
       paidAmount: newPaidAmount,
-      isPaid: isFullyPaid
+      isPaid: isFullyPaid,
+      manualOverrides: activeTenant.manualOverrides ? {
+        ...activeTenant.manualOverrides,
+        paidAmount: newPaidAmount,
+        isPaid: isFullyPaid
+      } : undefined
     });
 
     setAmount(0);
@@ -821,12 +819,12 @@ export const PaymentModal: React.FC<{
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Due</p>
-                 <p className="text-lg font-bold text-white font-mono">₹{billingDetails.totalDue.toLocaleString()}</p>
+                 <p className="text-lg font-bold text-white font-mono">₹{(billingDetails.totalDue ?? 0).toLocaleString()}</p>
               </div>
               <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-center">
                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Balance</p>
-                 <p className={cn("text-lg font-bold font-mono", billingDetails.balance > 0 ? "text-rose-400" : "text-emerald-400")}>
-                   ₹{billingDetails.balance.toLocaleString()}
+                 <p className={cn("text-lg font-bold font-mono", (billingDetails.outstandingBalance ?? 0) > 0 ? "text-rose-400" : "text-emerald-400")}>
+                   ₹{(billingDetails.outstandingBalance ?? 0).toLocaleString()}
                  </p>
               </div>
             </div>
@@ -1052,26 +1050,25 @@ export const HistoryDetailModal: React.FC<{
     if (!selectedTenantId || paymentAmount <= 0) return;
     
     const tenant = entry.snapshot.tenants.find((t: any) => t.id === selectedTenantId);
-    const newRecord: PaymentRecord = {
-      id: generateId(),
-      amount: paymentAmount,
-      date: Date.now(),
-      note: paymentNote
-    };
-
-    const currentPayments = Array.isArray(tenant.payments) ? tenant.payments : [];
-    const currentPaid = typeof tenant.paidAmount === 'number' ? tenant.paidAmount : (tenant.isPaid ? 1000000 : 0); // legacy fallback
-
-    const newPaidAmount = currentPaid + paymentAmount;
-    
-    // Calculate total due for this tenant in this entry
     const p = entry.snapshot.property;
     const elecUnits = Math.max(0, tenant.currElecReading - tenant.prevElecReading);
     const waterUnits = Math.max(0, tenant.currWaterReading - tenant.prevWaterReading);
     const totalExtra = tenant.expenses.reduce((acc: number, exp: any) => acc + exp.amount, 0);
     const totalDue = tenant.rent + (elecUnits * p.electricRate) + (waterUnits * p.waterRate) + totalExtra + tenant.previousDues;
 
+    const currentPayments = Array.isArray(tenant.payments) ? tenant.payments : [];
+    const currentPaid = typeof tenant.paidAmount === 'number' ? tenant.paidAmount : (tenant.isPaid ? totalDue : 0);
+    const newPaidAmount = currentPaid + paymentAmount;
+    const remainingBalance = Math.max(0, totalDue - newPaidAmount);
     const isFullyPaid = newPaidAmount >= totalDue;
+
+    const newRecord: PaymentRecord = {
+      id: generateId(),
+      amount: paymentAmount,
+      date: Date.now(),
+      note: paymentNote || 'Historical Payment Received',
+      remainingBalance: remainingBalance
+    };
 
     onUpdateTenant?.(entry.id, selectedTenantId, {
       payments: [...currentPayments, newRecord],
@@ -1457,8 +1454,26 @@ export const TenantProfileModal: React.FC<{
       return;
     }
     const isFullyPaid = valueToSave >= billing.totalDue;
+    const currentPaid = billing.paidAmount;
+    const delta = valueToSave - currentPaid;
+    let updatedPayments = [...(tenant.payments || [])];
+    const remainingBalance = Math.max(0, billing.totalDue - valueToSave);
+
+    if (delta > 0) {
+      const newRecord: PaymentRecord = {
+        id: generateId(),
+        amount: delta,
+        date: Date.now(),
+        note: 'Payment Recorded via Profile',
+        remainingBalance: remainingBalance
+      };
+      updatedPayments.push(newRecord);
+    } else if (valueToSave === 0) {
+      updatedPayments = [];
+    }
     
     onUpdateTenant(tenant.id, {
+      payments: updatedPayments,
       paidAmount: valueToSave,
       isPaid: isFullyPaid,
       manualOverrides: tenant.manualOverrides ? {
@@ -2157,3 +2172,70 @@ export const EditTenantContractModal: React.FC<{
     </Modal>
   );
 };
+
+export function BillingVerificationModal({
+  isOpen,
+  errors,
+  onClose,
+  onAutoFix
+}: {
+  isOpen: boolean;
+  errors: BillingVerificationIssue[];
+  onClose: () => void;
+  onAutoFix: () => void;
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Billing Cycle Cross-Check Verification Failed">
+      <div className="space-y-5">
+        <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-3">
+          <ShieldAlert className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-sm font-bold text-rose-300">New Month Rollover BLOCKED</h4>
+            <p className="text-xs text-rose-200/80 leading-relaxed">
+              Discrepancies were detected between tenant recorded payments and stored balances for the previous period. Next month bill generation has been halted to prevent carrying forward invalid arrears.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Affected Tenants & Discrepancies ({errors.length})</p>
+          {errors.map((err) => (
+            <div key={err.tenantId} className="p-4 bg-[#111111] rounded-2xl border border-white/10 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold text-white">{err.tenantName} <span className="text-xs font-mono text-slate-400">({err.propertyName} • Room {err.roomNumber})</span></span>
+                <span className="text-xs font-mono font-bold text-rose-400">Actual Arrears: {formatCurrency(err.actualArrears)}</span>
+              </div>
+              <p className="text-xs text-amber-300 font-mono bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20">{err.issue}</p>
+              <div className="text-[11px] text-slate-400 font-mono flex justify-between">
+                <span>Expected True Arrears: <strong className="text-emerald-400">{formatCurrency(err.expectedArrears)}</strong></span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-2xl text-xs text-emerald-300 space-y-1">
+          <p className="font-bold">Recommended Resolution:</p>
+          <p className="text-slate-300">Click <strong>Auto-Fix & Sync Balances</strong> below to automatically reconcile recorded payments with tenant profile balances and unblock the new billing cycle.</p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row justify-end gap-3 pt-3 border-t border-white/10">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 bg-[#181818] hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+          >
+            Cancel Rollover
+          </button>
+          <button
+            type="button"
+            onClick={onAutoFix}
+            className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Auto-Fix & Sync Balances
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}

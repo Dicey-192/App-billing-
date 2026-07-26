@@ -13,17 +13,162 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
-// Receipt PNG Cache Store Setup
-const RECEIPT_CACHE_DIR = path.join(process.cwd(), '.receipts_cache');
-if (!fs.existsSync(RECEIPT_CACHE_DIR)) {
-  fs.mkdirSync(RECEIPT_CACHE_DIR, { recursive: true });
+// Private Local Storage Folder Setup (Local-Only Architecture)
+const LOCAL_APP_DIR = path.join(process.cwd(), '.rentflo_data');
+const SUBDIRS = ['tenants', 'properties', 'readings', 'payments', 'receipts', 'backups'];
+
+function initLocalPrivateFolder() {
+  if (!fs.existsSync(LOCAL_APP_DIR)) {
+    fs.mkdirSync(LOCAL_APP_DIR, { recursive: true });
+  }
+  for (const sub of SUBDIRS) {
+    const subPath = path.join(LOCAL_APP_DIR, sub);
+    if (!fs.existsSync(subPath)) {
+      fs.mkdirSync(subPath, { recursive: true });
+    }
+  }
 }
+initLocalPrivateFolder();
+
+// Receipts subfolder mapping
+const RECEIPT_CACHE_DIR = path.join(LOCAL_APP_DIR, 'receipts');
 
 function getReceiptCacheKey(tenantId: string, month?: string): string {
   const cleanMonth = (month || 'CURRENT_CYCLE').replace(/[^a-zA-Z0-9_-]/g, '_');
   const cleanId = (tenantId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
   return `${cleanId}_${cleanMonth}.png`;
 }
+
+// Local Storage Status Endpoint
+app.get('/api/local-storage/status', async (req, res) => {
+  try {
+    initLocalPrivateFolder();
+    const stats: Record<string, number> = {};
+    for (const sub of SUBDIRS) {
+      const subPath = path.join(LOCAL_APP_DIR, sub);
+      const files = fs.existsSync(subPath) ? fs.readdirSync(subPath) : [];
+      stats[sub] = files.length;
+    }
+    const dbFile = path.join(LOCAL_APP_DIR, 'app_db.json');
+    const hasDbFile = fs.existsSync(dbFile);
+    const dbSize = hasDbFile ? fs.statSync(dbFile).size : 0;
+
+    return res.json({
+      success: true,
+      localOnly: true,
+      folderPath: '.rentflo_data/',
+      stats,
+      dbSize,
+      lastUpdated: hasDbFile ? fs.statSync(dbFile).mtimeMs : Date.now()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to read local storage status', message: err.message });
+  }
+});
+
+// Save Data directly into Local Private App Folder
+app.post('/api/local-storage/save', async (req, res) => {
+  try {
+    initLocalPrivateFolder();
+    const { data } = req.body;
+    if (!data) return res.status(400).json({ error: 'Missing data payload' });
+
+    // 1. Write master app_db.json
+    const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
+    await fs.promises.writeFile(dbFilePath, JSON.stringify(data, null, 2));
+
+    // 2. Write itemized files into subfolders for fast indexing & memory-efficient reads
+    if (Array.isArray(data.tenants)) {
+      for (const t of data.tenants) {
+        if (t.id) {
+          await fs.promises.writeFile(
+            path.join(LOCAL_APP_DIR, 'tenants', `${t.id}.json`),
+            JSON.stringify(t, null, 2)
+          );
+        }
+      }
+    }
+
+    if (Array.isArray(data.properties)) {
+      for (const p of data.properties) {
+        if (p.id) {
+          await fs.promises.writeFile(
+            path.join(LOCAL_APP_DIR, 'properties', `${p.id}.json`),
+            JSON.stringify(p, null, 2)
+          );
+        }
+      }
+    }
+
+    if (Array.isArray(data.history)) {
+      for (const h of data.history) {
+        if (h.id) {
+          await fs.promises.writeFile(
+            path.join(LOCAL_APP_DIR, 'payments', `${h.id}.json`),
+            JSON.stringify(h, null, 2)
+          );
+        }
+      }
+    }
+
+    return res.json({ success: true, savedAt: Date.now() });
+  } catch (err: any) {
+    console.error('[Local Storage] Save error:', err);
+    return res.status(500).json({ error: 'Failed to save to local folder', message: err.message });
+  }
+});
+
+// Load Data directly from Local Private App Folder
+app.get('/api/local-storage/load', async (req, res) => {
+  try {
+    initLocalPrivateFolder();
+    const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
+    if (fs.existsSync(dbFilePath)) {
+      const content = await fs.promises.readFile(dbFilePath, 'utf-8');
+      return res.json({ success: true, data: JSON.parse(content) });
+    }
+    return res.json({ success: true, data: null });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to load local folder data', message: err.message });
+  }
+});
+
+// Export entire private local folder as a ZIP archive
+app.get('/api/local-storage/export-folder', async (req, res) => {
+  try {
+    initLocalPrivateFolder();
+    const zip = new JSZip();
+
+    async function addFolderToZip(dirPath: string, zipFolder: JSZip) {
+      const files = fs.readdirSync(dirPath);
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          const subZip = zipFolder.folder(file);
+          if (subZip) await addFolderToZip(fullPath, subZip);
+        } else {
+          const content = fs.readFileSync(fullPath);
+          zipFolder.file(file, content);
+        }
+      }
+    }
+
+    await addFolderToZip(LOCAL_APP_DIR, zip);
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const zipName = `Rentflo_Local_Folder_Backup_${dateStr}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const nodeStream = zip.generateNodeStream({ type: 'nodebuffer', streamFiles: true });
+    nodeStream.pipe(res);
+  } catch (err: any) {
+    console.error('[Local Storage] Folder export failed:', err);
+    return res.status(500).json({ error: 'Failed to export local folder', message: err.message });
+  }
+});
 
 // 1. Cache Receipt PNG Endpoint
 app.post('/api/receipts/cache', async (req, res) => {

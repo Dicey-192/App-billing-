@@ -201,12 +201,21 @@ export function useStorage() {
     setIsLoading(false);
   }, []);
 
-  // Save data to BackendDB when changes occur
+  // Save data to BackendDB & Local App Folder when changes occur
   useEffect(() => {
     if (isLoading) return;
 
     db.set(STORAGE_KEY, data).catch(e => {
       console.error('Failed to save data to BackendDB', e);
+    });
+
+    // Write to local private app folder (.rentflo_data)
+    fetch('/api/local-storage/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data })
+    }).catch(err => {
+      console.warn('Sync to local app folder non-blocking fallback:', err);
     });
     
     const stringified = JSON.stringify(data);

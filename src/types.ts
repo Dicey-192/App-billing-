@@ -64,6 +64,17 @@ export interface PaymentRecord {
   amount: number;
   date: number;
   note?: string;
+  remainingBalance?: number;
+}
+
+export interface BillingVerificationIssue {
+  tenantId: string;
+  tenantName: string;
+  roomNumber: string;
+  propertyName: string;
+  issue: string;
+  expectedArrears: number;
+  actualArrears: number;
 }
 
 export interface HistoryTenantSnapshot extends Tenant {

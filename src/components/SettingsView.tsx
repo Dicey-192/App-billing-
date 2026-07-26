@@ -5,7 +5,8 @@ import {
   Home, Users, ShieldAlert, Sparkles, SlidersHorizontal, AlertCircle, 
   Trash2, Edit2, Plus, Calendar, RefreshCw, KeyRound, Download, 
   Upload, CheckCircle2, ChevronRight, Info, Settings, Bell, Palette, 
-  BookOpen, LogOut, Check, History, FileText, Search, Zap, Droplets
+  BookOpen, LogOut, Check, History, FileText, Search, Zap, Droplets,
+  Folder, Lock, ShieldCheck, HardDrive
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PropertyRatesModal, PropertyQuickViewModal } from './Modals';
@@ -101,6 +102,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       p.id.toLowerCase().includes(q)
     );
   }, [properties, propertySearch]);
+
+  const [isExportingFolder, setIsExportingFolder] = useState(false);
+
+  const handleExportLocalFolder = async () => {
+    setIsExportingFolder(true);
+    try {
+      const res = await fetch('/api/local-storage/export-folder');
+      if (!res.ok) throw new Error("Failed to generate folder zip archive");
+      const blob = await res.blob();
+      const dateStr = new Date().toISOString().split('T')[0];
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Rentflo_Local_Data_Folder_${dateStr}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast("Private app storage folder exported as ZIP successfully", "success");
+    } catch (err) {
+      showToast("Folder export failed", "error");
+    } finally {
+      setIsExportingFolder(false);
+    }
+  };
 
   // Handle local export file trigger
   const handleExportJSON = () => {
@@ -624,6 +650,50 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Private App Folder Storage Card */}
+              <div className="p-5 bg-[#181818] border border-emerald-500/20 rounded-2xl space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <h4 className="font-bold text-xs text-white uppercase tracking-wide">Private App Storage Folder</h4>
+                      <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[9px] font-bold rounded">100% LOCAL & PRIVATE</span>
+                    </div>
+                    <p className="text-[10px] text-[#A3A3A3] mt-1 leading-relaxed">
+                      All data (tenants, properties, readings, payments, receipt PNGs) is locked inside your private local storage folder (<code className="text-emerald-300 font-mono">.rentflo_data/</code>). Data never leaves your device.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[9px] font-mono">
+                  <div className="p-2 bg-[#111111] border border-white/5 rounded-xl">
+                    <span className="text-[#A3A3A3] block uppercase">Tenants Subfolder</span>
+                    <span className="text-white font-bold">{data?.tenants?.length || 0} Records</span>
+                  </div>
+                  <div className="p-2 bg-[#111111] border border-white/5 rounded-xl">
+                    <span className="text-[#A3A3A3] block uppercase">Properties Subfolder</span>
+                    <span className="text-white font-bold">{data?.properties?.length || 0} Facilities</span>
+                  </div>
+                  <div className="p-2 bg-[#111111] border border-white/5 rounded-xl">
+                    <span className="text-[#A3A3A3] block uppercase">Payments Subfolder</span>
+                    <span className="text-white font-bold">{data?.history?.length || 0} Archives</span>
+                  </div>
+                  <div className="p-2 bg-[#111111] border border-white/5 rounded-xl">
+                    <span className="text-[#A3A3A3] block uppercase">Receipts Subfolder</span>
+                    <span className="text-white font-bold">Cached PNG Files</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleExportLocalFolder}
+                  disabled={isExportingFolder}
+                  className="w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-mono font-black text-[10px] tracking-widest uppercase rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <Folder className="w-4 h-4" />
+                  {isExportingFolder ? 'Packaging Storage Folder...' : 'Export Entire Private Folder (.zip)'}
+                </button>
               </div>
 
               {/* Local File Export / Import JSON */}
