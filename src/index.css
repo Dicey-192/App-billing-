@@ -252,7 +252,7 @@
       max-width: 100% !important;
       position: static !important;
       padding: 24px !important;
-      border-radius: 0 !important;
+      border-radius: 20px !important;
     }
 
     .receipt-card [class*="absolute"] {
