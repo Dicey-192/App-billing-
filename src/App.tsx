@@ -8,7 +8,7 @@ import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr } from './lib/utils';
 import { Property, Tenant, AppData, PaymentRecord } from './types';
-import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload, ExternalLink } from 'lucide-react';
+import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload, ExternalLink, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
 import { AIAssistant } from './components/AIAssistant';
@@ -287,6 +287,64 @@ const safeHtml2Canvas = async (element: HTMLElement, options: any) => {
   }
 };
 
+// Helper to capture receipt element to canvas base64
+const captureReceiptBase64 = async (tenantId: string): Promise<string | null> => {
+  const element = document.getElementById(`receipt-${tenantId}`);
+  if (!element) return null;
+  try {
+    const canvas = await safeHtml2Canvas(element, { 
+      scale: 2, 
+      useCORS: true, 
+      logging: false,
+      backgroundColor: '#FFFFFF'
+    });
+    return canvas.toDataURL("image/png");
+  } catch (err) {
+    console.warn(`Failed to capture receipt element for ${tenantId}`, err);
+    return null;
+  }
+};
+
+// Helper to upload base64 receipt to server cache
+const uploadReceiptToCache = async (tenantId: string, month: string, base64Image: string): Promise<boolean> => {
+  try {
+    const res = await fetch('/api/receipts/cache', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId, month, base64Image })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn(`Failed to upload cached receipt for ${tenantId}`, err);
+    return false;
+  }
+};
+
+// Background pre-cacher function
+const preCacheReceipts = async (tenantsList: any[], monthName: string) => {
+  if (!tenantsList || tenantsList.length === 0) return;
+  const activeMonth = monthName || 'Current Cycle';
+  try {
+    const checkRes = await fetch('/api/receipts/check-cache', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantIds: tenantsList.map(t => t.id), month: activeMonth })
+    });
+    if (!checkRes.ok) return;
+    const { missingTenantIds } = await checkRes.json();
+    if (!missingTenantIds || missingTenantIds.length === 0) return;
+
+    for (const tid of missingTenantIds) {
+      const b64 = await captureReceiptBase64(tid);
+      if (b64) {
+        await uploadReceiptToCache(tid, activeMonth, b64);
+      }
+    }
+  } catch (err) {
+    // Non-blocking background error fallback
+  }
+};
+
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
@@ -337,24 +395,50 @@ export default function App() {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkProgressMsg, setBulkProgressMsg] = useState<string>('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (tenants && tenants.length > 0) {
+        preCacheReceipts(tenants, data.activeMonth || 'Current Cycle');
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [tenants, data.activeMonth]);
+
   const downloadReceipt = async (tenant: any) => {
     setProcessingId(tenant.id);
-    console.log(`Starting download for ${tenant.name}`);
+    const activeMonth = data.activeMonth || 'Current Cycle';
+    const cleanName = (tenant.name || 'Tenant').replace(/\s+/g, '_');
+    const filename = `receipt_${cleanName}_${tenant.roomNumber}.png`;
+
     try {
-      const element = document.getElementById(`receipt-${tenant.id}`);
-      if (!element) throw new Error("Receipt element not found");
-      
-      const canvas = await safeHtml2Canvas(element, { 
-        scale: 2, 
-        useCORS: true, 
-        logging: true,
-        backgroundColor: '#FFFFFF'
-      });
-      const url = canvas.toDataURL("image/png");
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `receipt_${tenant.name.replace(/\s+/g, '_')}_${tenant.roomNumber}.png`;
-      link.click();
+      // 1. Try serving pre-cached PNG directly from server
+      const downloadUrl = `/api/receipts/${tenant.id}/download?month=${encodeURIComponent(activeMonth)}&filename=${encodeURIComponent(filename)}`;
+      const res = await fetch(downloadUrl);
+
+      if (res.ok) {
+        const blob = await res.blob();
+        saveAs(blob, filename);
+        return;
+      }
+
+      // 2. Fallback: generate PNG locally if not yet cached on server
+      const base64 = await captureReceiptBase64(tenant.id);
+      if (!base64) throw new Error("Receipt element not found or canvas render failed");
+
+      uploadReceiptToCache(tenant.id, activeMonth, base64);
+
+      const byteString = atob(base64.split(',')[1]);
+      const mimeString = base64.split(',')[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], { type: mimeString });
+      saveAs(blob, filename);
     } catch (e) {
       console.error("Download failed for tenant:", tenant.name, e);
       alert(`Failed to generate receipt for ${tenant.name}. Check console for details.`);
@@ -362,8 +446,6 @@ export default function App() {
       setProcessingId(null);
     }
   };
-
-  const [bulkProcessing, setBulkProcessing] = useState(false);
 
   const getReceiptIdHelper = (tenantId: string, monthName: string) => {
     let hash = 0;
@@ -511,8 +593,7 @@ export default function App() {
 
   async function handleBulkDownload() {
     setBulkProcessing(true);
-    const zip = new JSZip();
-    const folder = zip.folder("receipts");
+    const activeMonth = data.activeMonth || 'Current Cycle';
     
     try {
       const targets = selectedTenantIds && selectedTenantIds.size > 0 
@@ -524,42 +605,69 @@ export default function App() {
         return;
       }
 
-      for (const tenant of targets) {
-        const element = document.getElementById(`receipt-${tenant.id}`);
-        if (element) {
-          try {
-            // Render receipt element directly to Canvas with original style settings
-            const canvas = await safeHtml2Canvas(element, { 
-              scale: 2, 
-              useCORS: true, 
-              logging: false,
-              backgroundColor: '#FFFFFF'
-            });
-            
-            // Extract the blob of the image and append binary to ZIP file
-            const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-            if (blob) {
-              const arrayBuffer = await blob.arrayBuffer();
-              const cleanName = tenant.name.replace(/\s+/g, '_');
-              const dateStr = new Date().toISOString().split('T')[0];
-              const invoiceNum = getReceiptIdHelper(tenant.id, data.activeMonth || 'Current_Cycle');
-              const filename = `${cleanName}-${dateStr}-${invoiceNum}.png`;
-              folder?.file(filename, arrayBuffer);
-            }
-          } catch (itemErr) {
-            console.error(`Failed to snapshot receipt for ${tenant.name}`, itemErr);
-          }
+      setBulkProgressMsg(`Checking ${targets.length} receipts...`);
+
+      // 1. Check which targets are already cached on server
+      let missingIds: string[] = [];
+      try {
+        const checkRes = await fetch('/api/receipts/check-cache', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantIds: targets.map((t: any) => t.id), month: activeMonth })
+        });
+
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          missingIds = checkData.missingTenantIds || [];
         } else {
-          console.warn(`Receipt element not found for ${tenant.name}, skipping PNG conversion.`);
+          missingIds = targets.map((t: any) => t.id);
+        }
+      } catch {
+        missingIds = targets.map((t: any) => t.id);
+      }
+
+      // 2. Generate and upload missing receipts to server cache if any
+      if (missingIds.length > 0) {
+        for (let i = 0; i < missingIds.length; i++) {
+          const mid = missingIds[i];
+          setBulkProgressMsg(`Preparing receipt ${i + 1} of ${missingIds.length}...`);
+          const b64 = await captureReceiptBase64(mid);
+          if (b64) {
+            await uploadReceiptToCache(mid, activeMonth, b64);
+          }
         }
       }
-      const blob = await zip.generateAsync({ type: "blob" });
-      saveAs(blob, `Rentflo_Receipts_${new Date().toISOString().split('T')[0]}.zip`);
+
+      setBulkProgressMsg(`Streaming ZIP package...`);
+
+      // 3. Request server to stream the ZIP file with all cached receipts
+      const zipRes = await fetch('/api/receipts/zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          month: activeMonth,
+          targets: targets.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            roomNumber: t.roomNumber,
+            invoiceNum: getReceiptIdHelper(t.id, activeMonth)
+          }))
+        })
+      });
+
+      if (!zipRes.ok) {
+        throw new Error("Failed to stream ZIP archive from server");
+      }
+
+      const zipBlob = await zipRes.blob();
+      const dateStr = new Date().toISOString().split('T')[0];
+      saveAs(zipBlob, `Rentflo_Receipts_${dateStr}.zip`);
     } catch (e) {
       console.error("Bulk download failed", e);
       alert("Bulk download failed. Check console for details.");
     } finally {
       setBulkProcessing(false);
+      setBulkProgressMsg('');
     }
   }
 
@@ -1947,6 +2055,7 @@ export default function App() {
                 pushToUndo={pushToUndo}
                 activeMonth={data.activeMonth || ''}
                 downloadReceipt={downloadReceipt}
+                processingId={processingId}
               />
             )}
             {currentView === 'settings' && (
@@ -2187,6 +2296,21 @@ export default function App() {
                 </div>
                 <p className="text-xs font-bold text-emerald-400 font-mono">{bulkProgress}% Complete</p>
              </div>
+          </motion.div>
+        )}
+
+        {bulkProcessing && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 right-6 z-[9999] bg-[#0F172A] border border-blue-500/30 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3"
+          >
+            <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+            <div>
+              <p className="text-xs font-bold text-white uppercase tracking-wider">Preparing Receipts Package</p>
+              <p className="text-[11px] text-slate-400 font-mono">{bulkProgressMsg || 'Streaming ZIP package...'}</p>
+            </div>
           </motion.div>
         )}
 

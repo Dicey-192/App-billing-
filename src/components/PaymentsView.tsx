@@ -4,7 +4,7 @@ import { formatCurrency } from '../lib/utils';
 import { 
   DollarSign, Search, Filter, Download, Trash2, CheckCircle2, 
   Calendar, CreditCard, RefreshCw, Sparkles, SlidersHorizontal, 
-  AlertCircle, ArrowUpRight, TrendingUp, Check
+  AlertCircle, ArrowUpRight, TrendingUp, Check, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -16,6 +16,7 @@ interface PaymentsViewProps {
   pushToUndo: () => void;
   activeMonth: string;
   downloadReceipt?: (tenant: any) => Promise<void>;
+  processingId?: string | null;
 }
 
 export const PaymentsView: React.FC<PaymentsViewProps> = ({
@@ -25,7 +26,8 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   updateTenant,
   pushToUndo,
   activeMonth,
-  downloadReceipt
+  downloadReceipt,
+  processingId
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPropertyId, setSelectedPropertyId] = useState('all');
@@ -333,10 +335,15 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
                     {downloadReceipt && (
                       <button
                         onClick={() => downloadReceipt(p.rawTenant)}
-                        className="p-1.5 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[#A3A3A3] hover:text-white transition-colors cursor-pointer"
+                        disabled={processingId === p.rawTenant?.id}
+                        className="p-1.5 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[#A3A3A3] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
                         title="Generate Receipt File"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        {processingId === p.rawTenant?.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
                       </button>
                     )}
                     <button

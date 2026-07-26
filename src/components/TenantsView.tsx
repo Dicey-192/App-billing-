@@ -6,7 +6,7 @@ import {
   AlertCircle, FileText, CheckCircle2, List, Home, History, 
   Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, 
   MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, 
-  Check, Bell, ShieldAlert, Sparkles, SlidersHorizontal, Info, Zap, RotateCw, ArrowLeft
+  Check, Bell, ShieldAlert, Sparkles, SlidersHorizontal, Info, Zap, RotateCw, ArrowLeft, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { EditTenantDetailsModal, EditTenantContractModal } from './Modals';
@@ -459,10 +459,20 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
             {downloadReceipt && (
               <button
                 onClick={() => downloadReceipt(viewingTenant)}
-                className="py-3 px-4 bg-[#181818] hover:bg-white/10 border border-white/10 text-white font-black text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                disabled={processingId === viewingTenant.id}
+                className="py-3 px-4 bg-[#181818] hover:bg-white/10 border border-white/10 text-white font-black text-xs tracking-wider uppercase rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                <Download className="w-4 h-4 text-blue-400" />
-                Download Receipt
+                {processingId === viewingTenant.id ? (
+                  <>
+                    <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                    Preparing...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 text-blue-400" />
+                    Download Receipt
+                  </>
+                )}
               </button>
             )}
           </div>
@@ -894,10 +904,15 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
                           e.stopPropagation();
                           downloadReceipt(t);
                         }}
-                        className="p-1.5 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[#A3A3A3] hover:text-white transition-colors cursor-pointer"
+                        disabled={processingId === t.id}
+                        className="p-1.5 bg-[#111111] hover:bg-white/10 border border-white/5 rounded-lg text-[#A3A3A3] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
                         title="Download Receipt"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        {processingId === t.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
                       </button>
                     )}
                     <button
