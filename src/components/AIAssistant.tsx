@@ -359,30 +359,32 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
 
         <div className="space-y-1 border-t border-b border-dashed border-white/5 py-2 font-mono text-slate-300">
           <div className="flex justify-between">
-            <span>Rent</span>
+            <span>1. Rent</span>
             <span>{formatCurrency(billing.baseRent)}</span>
           </div>
           <div className="flex justify-between">
-            <span>Maintenance</span>
-            <span>{formatCurrency(billing.otherFees)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Electricity ({billing.elecUnits} U)</span>
+            <span>2. Electricity ({billing.elecUnits} U)</span>
             <span>{formatCurrency(billing.electricityCharges)}</span>
           </div>
           <div className="flex justify-between">
-            <span>Water ({billing.waterUnits} U)</span>
+            <span>3. Water ({billing.waterUnits} U)</span>
             <span>{formatCurrency(billing.waterCharges)}</span>
           </div>
-          {billing.openingBalance !== 0 && (
-            <div className="flex justify-between text-slate-500">
-              <span>Balance Forward</span>
-              <span>{formatCurrency(billing.openingBalance)}</span>
-            </div>
-          )}
+          <div className="flex justify-between text-slate-400">
+            <span>4. Additional Charges / Arrears</span>
+            <span>{formatCurrency(billing.openingBalance + billing.otherFees)}</span>
+          </div>
           <div className="flex justify-between font-bold border-t border-white/5 pt-1 text-white">
-            <span>Total Dues</span>
-            <span>{formatCurrency(billing.totalDue)}</span>
+            <span>5. Subtotal</span>
+            <span>{formatCurrency(billing.baseRent + billing.electricityCharges + billing.waterCharges + (billing.openingBalance + billing.otherFees))}</span>
+          </div>
+          <div className="flex justify-between text-emerald-400 font-semibold">
+            <span>6. Payment Received</span>
+            <span>{formatCurrency(billing.paidAmount)}</span>
+          </div>
+          <div className="flex justify-between font-bold border-t border-white/5 pt-1 text-white">
+            <span>7. Total Amount Due</span>
+            <span>{formatCurrency(billing.outstandingBalance)}</span>
           </div>
         </div>
 

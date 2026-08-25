@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Property, Tenant, ExpenseItem, PaymentRecord, HistoryTenantSnapshot, ManualOverrides, BillingVerificationIssue } from '../types';
 import { generateId, cn, formatCurrency, getTenantBillingDetails } from '../lib/utils';
-import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2, ShieldAlert } from 'lucide-react';
+import { X, Plus, Trash2, Home, Users, Zap, Droplets, CreditCard, Upload, Download, Calendar, Clipboard, ArrowDownUp, Check, AlertTriangle, LayoutList, History as HistoryIcon, IndianRupee, CheckCircle2, Edit2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ModalProps {
@@ -1486,6 +1486,153 @@ export const TenantProfileModal: React.FC<{
 
   const [showEditDetails, setShowEditDetails] = useState(false);
 
+  const handleExportTenantCSV = () => {
+    const escapeCSV = (val: any) => {
+      if (val === undefined || val === null) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const lines: string[] = [];
+
+    // Title & Metadata
+    lines.push(escapeCSV("TENANT PROFILE & LEDGER REPORT"));
+    lines.push(`${escapeCSV("Generated Date")},${escapeCSV(new Date().toLocaleString())}`);
+    lines.push("");
+
+    // Section 1: Tenant Core Details
+    lines.push(escapeCSV("--- TENANT INFORMATION ---"));
+    lines.push(`${escapeCSV("Tenant Name")},${escapeCSV(tenant.name)}`);
+    lines.push(`${escapeCSV("Room Number")},${escapeCSV(tenant.roomNumber)}`);
+    lines.push(`${escapeCSV("Property Name")},${escapeCSV(property.name)}`);
+    lines.push(`${escapeCSV("Phone / WhatsApp")},${escapeCSV(tenant.whatsappNumber || (tenant as any).phone || "N/A")}`);
+    lines.push(`${escapeCSV("Settlement Status")},${escapeCSV(billing.outstandingBalance <= 0 ? "Paid / Settled" : billing.paidAmount > 0 ? "Partial Payment" : "Unpaid / Arrears")}`);
+    lines.push("");
+
+    // Section 2: Current Cycle Billing Breakdown & Arrears
+    lines.push(escapeCSV("--- CURRENT BILLING CYCLE BREAKDOWN & ARREARS ---"));
+    lines.push(`${escapeCSV("Base Rent")},${escapeCSV(billing.baseRent)}`);
+    lines.push(`${escapeCSV("Electricity Prev Reading")},${escapeCSV(tenant.prevElecReading)}`);
+    lines.push(`${escapeCSV("Electricity Curr Reading")},${escapeCSV(tenant.currElecReading)}`);
+    lines.push(`${escapeCSV("Electricity Units Consumed")},${escapeCSV(billing.elecUnits)}`);
+    lines.push(`${escapeCSV("Electricity Rate Per Unit")},${escapeCSV(property.electricRate)}`);
+    lines.push(`${escapeCSV("Electricity Charges")},${escapeCSV(billing.electricityCharges)}`);
+    lines.push(`${escapeCSV("Water Prev Reading")},${escapeCSV(tenant.prevWaterReading)}`);
+    lines.push(`${escapeCSV("Water Curr Reading")},${escapeCSV(tenant.currWaterReading)}`);
+    lines.push(`${escapeCSV("Water Units Consumed")},${escapeCSV(billing.waterUnits)}`);
+    lines.push(`${escapeCSV("Water Rate Per Unit")},${escapeCSV(property.waterRate)}`);
+    lines.push(`${escapeCSV("Water Charges")},${escapeCSV(billing.waterCharges)}`);
+    lines.push(`${escapeCSV("Other Fees / Expenses")},${escapeCSV(billing.otherFees)}`);
+    lines.push(`${escapeCSV("Opening Balance / Previous Arrears")},${escapeCSV(billing.openingBalance)}`);
+    lines.push(`${escapeCSV("Total Bill Due")},${escapeCSV(billing.totalDue)}`);
+    lines.push(`${escapeCSV("Total Amount Paid")},${escapeCSV(billing.paidAmount)}`);
+    lines.push(`${escapeCSV("Current Outstanding Balance")},${escapeCSV(billing.outstandingBalance)}`);
+    lines.push("");
+
+    // Section 3: Itemized Additional Expenses (if present)
+    if (tenant.expenses && tenant.expenses.length > 0) {
+      lines.push(escapeCSV("--- ITEMIZED ADDITIONAL EXPENSES ---"));
+      lines.push([escapeCSV("Expense Title"), escapeCSV("Amount")].join(","));
+      tenant.expenses.forEach(exp => {
+        lines.push([escapeCSV(exp.title), escapeCSV(exp.amount)].join(","));
+      });
+      lines.push("");
+    }
+
+    // Section 4: Payments Ledger
+    lines.push(escapeCSV("--- ALL PAYMENT TRANSACTIONS ---"));
+    const paymentHeaders = ["Payment ID", "Date", "Amount Paid", "Note / Method", "Remaining Balance After Payment"];
+    lines.push(paymentHeaders.map(escapeCSV).join(","));
+
+    if (tenant.payments && tenant.payments.length > 0) {
+      tenant.payments.forEach(p => {
+        const pDate = p.date ? new Date(p.date).toLocaleString() : "N/A";
+        const remBal = p.remainingBalance !== undefined ? p.remainingBalance : "N/A";
+        lines.push([
+          escapeCSV(p.id),
+          escapeCSV(pDate),
+          escapeCSV(p.amount),
+          escapeCSV(p.note || "Payment"),
+          escapeCSV(remBal)
+        ].join(","));
+      });
+    } else {
+      lines.push(escapeCSV("No payment transactions recorded for this tenant in current period."));
+    }
+    lines.push("");
+
+    // Section 5: Historical Bills & Meter Readings
+    lines.push(escapeCSV("--- BILL & METER READING HISTORY SNAPSHOTS ---"));
+    const historyHeaders = [
+      "History Period / Cycle",
+      "Property",
+      "Base Rent",
+      "Elec Prev",
+      "Elec Curr",
+      "Elec Units",
+      "Elec Charges",
+      "Water Prev",
+      "Water Curr",
+      "Water Units",
+      "Water Charges",
+      "Other Fees",
+      "Arrears / Opening Balance",
+      "Total Due",
+      "Paid Amount",
+      "Outstanding Balance",
+      "Status"
+    ];
+    lines.push(historyHeaders.map(escapeCSV).join(","));
+
+    if (tenantHistory && tenantHistory.length > 0) {
+      tenantHistory.forEach((h: any) => {
+        const hTenant = h.snapshot.tenants.find((t: any) => t.id === tenant.id);
+        if (!hTenant) return;
+        const hProp = h.snapshot.property || property;
+        const hBilling = getTenantBillingDetails(hTenant, hProp);
+        const periodLabel = h.month || h.snapshot.month || (h.date ? new Date(h.date).toLocaleDateString() : "Historical");
+        const statusStr = hBilling.outstandingBalance <= 0 ? "Paid" : hBilling.paidAmount > 0 ? "Partial" : "Unpaid";
+
+        lines.push([
+          escapeCSV(periodLabel),
+          escapeCSV(hProp.name),
+          escapeCSV(hBilling.baseRent),
+          escapeCSV(hTenant.prevElecReading),
+          escapeCSV(hTenant.currElecReading),
+          escapeCSV(hBilling.elecUnits),
+          escapeCSV(hBilling.electricityCharges),
+          escapeCSV(hTenant.prevWaterReading),
+          escapeCSV(hTenant.currWaterReading),
+          escapeCSV(hBilling.waterUnits),
+          escapeCSV(hBilling.waterCharges),
+          escapeCSV(hBilling.otherFees),
+          escapeCSV(hBilling.openingBalance),
+          escapeCSV(hBilling.totalDue),
+          escapeCSV(hBilling.paidAmount),
+          escapeCSV(hBilling.outstandingBalance),
+          escapeCSV(statusStr)
+        ].join(","));
+      });
+    } else {
+      lines.push(escapeCSV("No historical billing entries recorded yet."));
+    }
+
+    const csvContent = lines.join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const safeTenantName = tenant.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.download = `${safeTenantName}_report_${dateStr}.csv`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       <Modal isOpen={isOpen} onClose={onClose} title={`Tenant Dossier & Records`}>
@@ -1505,13 +1652,23 @@ export const TenantProfileModal: React.FC<{
               )}
             </div>
             
-            <button
-              onClick={() => setShowEditDetails(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shrink-0 shadow-lg"
-            >
-              <Edit2 className="w-3.5 h-3.5" />
-              Edit Tenant Details
-            </button>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button
+                onClick={handleExportTenantCSV}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg"
+                title="Download full CSV report for this tenant"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download CSV
+              </button>
+              <button
+                onClick={() => setShowEditDetails(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-lg"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                Edit Details
+              </button>
+            </div>
           </div>
 
         {/* Current Month Bill Profile (Inline View/Edit) */}

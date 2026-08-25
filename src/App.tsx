@@ -498,27 +498,37 @@ export default function App() {
   }, [tenants, data.activeMonth]);
 
   const downloadReceipt = async (tenant: any) => {
-    setProcessingId(tenant.id);
+    const liveTenant = tenants.find((t: any) => t.id === tenant.id) || tenant;
+    setProcessingId(liveTenant.id);
     const activeMonth = data.activeMonth || 'Current Cycle';
-    const cleanName = (tenant.name || 'Tenant').replace(/\s+/g, '_');
-    const filename = `receipt_${cleanName}_${tenant.roomNumber}.png`;
+    const cleanName = (liveTenant.name || 'Tenant').replace(/\s+/g, '_');
+    const filename = `receipt_${cleanName}_${liveTenant.roomNumber}.png`;
 
     try {
-      // 1. Try serving pre-cached PNG directly from server
-      const downloadUrl = `/api/receipts/${tenant.id}/download?month=${encodeURIComponent(activeMonth)}&filename=${encodeURIComponent(filename)}`;
-      const res = await fetch(downloadUrl);
+      // Direct live capture ensures latest payments are always reflected immediately
+      const base64 = await captureReceiptBase64(liveTenant.id);
+      if (!base64) throw new Error("Receipt element not found or canvas render failed");
 
-      if (res.ok) {
-        const blob = await res.blob();
-        saveAs(blob, filename);
+      // Validate payment received in generated statement
+      const paymentsArraySum = (Array.isArray(liveTenant.payments) && liveTenant.payments.length > 0)
+        ? liveTenant.payments.reduce((sum: number, p: any) => sum + (Number(p?.amount) || 0), 0)
+        : 0;
+      const directPaid = typeof liveTenant.paidAmount === 'number' ? liveTenant.paidAmount : 0;
+      const overridePaid = typeof liveTenant.manualOverrides?.paidAmount === 'number' ? liveTenant.manualOverrides.paidAmount : 0;
+      const expectedPaid = Math.max(paymentsArraySum, directPaid, overridePaid);
+
+      const receiptEl = document.getElementById(`receipt-${liveTenant.id}`);
+      const domPaidStr = receiptEl?.getAttribute('data-paid-amount');
+      const domPaidAmount = domPaidStr ? parseFloat(domPaidStr) : 0;
+
+      if (expectedPaid > 0 && domPaidAmount < expectedPaid) {
+        console.error(`[Receipt Validation Error] Payment mismatch for ${liveTenant.name}: expected payment ₹${expectedPaid}, but statement element showed ₹${domPaidAmount}. Blocking download.`);
+        alert(`Statement generation blocked: Payment verification mismatch for ${liveTenant.name}. Expected ₹${expectedPaid.toLocaleString('en-IN')}, found ₹${domPaidAmount.toLocaleString('en-IN')}.`);
         return;
       }
 
-      // 2. Fallback: generate PNG locally if not yet cached on server
-      const base64 = await captureReceiptBase64(tenant.id);
-      if (!base64) throw new Error("Receipt element not found or canvas render failed");
-
-      uploadReceiptToCache(tenant.id, activeMonth, base64);
+      // Sync fresh image to cache asynchronously
+      uploadReceiptToCache(liveTenant.id, activeMonth, base64);
 
       const byteString = atob(base64.split(',')[1]);
       const mimeString = base64.split(',')[0].split(':')[1].split(';')[0];
@@ -530,8 +540,8 @@ export default function App() {
       const blob = new Blob([ab], { type: mimeString });
       saveAs(blob, filename);
     } catch (e) {
-      console.error("Download failed for tenant:", tenant.name, e);
-      alert(`Failed to generate receipt for ${tenant.name}. Check console for details.`);
+      console.error("Download failed for tenant:", liveTenant.name, e);
+      alert(`Failed to generate receipt for ${liveTenant.name}. Check console for details.`);
     } finally {
       setProcessingId(null);
     }
@@ -1474,20 +1484,24 @@ export default function App() {
   };
 
   const getWhatsAppMessage = (tenant: Tenant, prop: Property) => {
-    const elecUnits = Math.max(0, tenant.currElecReading - tenant.prevElecReading);
-    const waterUnits = Math.max(0, tenant.currWaterReading - tenant.prevWaterReading);
-    const totalExtra = tenant.expenses.reduce((acc, exp) => acc + exp.amount, 0);
-    const totalDue = tenant.rent + (elecUnits * prop.electricRate) + (waterUnits * prop.waterRate) + totalExtra + tenant.previousDues;
+    const billing = getTenantBillingDetails(tenant, prop);
+    const elecUnits = billing.elecUnits;
+    const waterUnits = billing.waterUnits;
+    const additionalCharges = billing.openingBalance + billing.otherFees;
+    const currentSubtotal = billing.baseRent + billing.electricityCharges + billing.waterCharges + additionalCharges;
     
-    return `*Rent Bill - ${data.activeMonth || 'Current Month'}*\n\n` +
+    return `*Statement of Account - ${data.activeMonth || 'Current Month'}*\n\n` +
            `*Tenant:* ${tenant.name}\n` +
            `*Property:* ${prop.name} (Room ${tenant.roomNumber})\n\n` +
-           `*Readings:*\n` +
-           `- Elec: ${tenant.currElecReading} (${elecUnits} units)\n` +
-           `- Water: ${tenant.currWaterReading} (${waterUnits} units)\n\n` +
-           `*Total Amount:* ₹${totalDue.toLocaleString()}\n` +
-           `*Status:* ${tenant.isPaid ? 'PAID ✅' : 'PENDING ⏳'}\n\n` +
-           `_Please pay by the 5th to avoid late fees._`;
+           `*1. Rent:* ₹${billing.baseRent.toLocaleString()}\n` +
+           `*2. Electricity Fee:* ₹${billing.electricityCharges.toLocaleString()} (Reading: ${tenant.prevElecReading} to ${tenant.currElecReading}, ${elecUnits} units @ ₹${prop.electricRate}/U)\n` +
+           `*3. Water Fee:* ₹${billing.waterCharges.toLocaleString()} (Reading: ${tenant.prevWaterReading} to ${tenant.currWaterReading}, ${waterUnits} units @ ₹${prop.waterRate}/U)\n` +
+           `*4. Additional Charges / Arrears:* ₹${additionalCharges.toLocaleString()}\n` +
+           `*5. Current Cycle Subtotal:* ₹${currentSubtotal.toLocaleString()}\n` +
+           `*6. Payment Received:* ₹${billing.paidAmount.toLocaleString()}\n` +
+           `*7. Total Amount Due:* ₹${billing.outstandingBalance.toLocaleString()}\n\n` +
+           `*Status:* ${billing.outstandingBalance <= 0 ? 'PAID / SETTLED ✅' : billing.paidAmount > 0 ? 'PARTIALLY PAID ⏳' : 'PENDING ⏳'}\n\n` +
+           `_Thank you._`;
   };
 
   const shareViaWhatsApp = async (tenant: Tenant) => {

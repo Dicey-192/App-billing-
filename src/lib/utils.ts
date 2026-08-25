@@ -45,15 +45,15 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
   
   const totalDue = tenant.manualOverrides?.totalDue !== undefined ? tenant.manualOverrides.totalDue : (baseRent + electricityCharges + waterCharges + otherFees + openingBalance);
   
-  // Resolve paid amount prioritizing overrides, stored paidAmount, or payments array sum
-  let paidAmount = 0;
-  if (tenant.manualOverrides?.paidAmount !== undefined) {
-    paidAmount = tenant.manualOverrides.paidAmount;
-  } else if (typeof tenant.paidAmount === 'number' && tenant.paidAmount > 0) {
-    paidAmount = tenant.paidAmount;
-  } else if (Array.isArray(tenant.payments) && tenant.payments.length > 0) {
-    paidAmount = tenant.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-  } else if (tenant.isPaid) {
+  // Resolve paid amount prioritizing overrides, recorded payments, and stored paidAmount
+  const paymentsArraySum = (Array.isArray(tenant.payments) && tenant.payments.length > 0)
+    ? tenant.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
+    : 0;
+  const directPaid = (typeof tenant.paidAmount === 'number' && !isNaN(tenant.paidAmount)) ? tenant.paidAmount : 0;
+  const overridePaid = (tenant.manualOverrides?.paidAmount !== undefined && !isNaN(tenant.manualOverrides.paidAmount)) ? tenant.manualOverrides.paidAmount : 0;
+
+  let paidAmount = Math.max(paymentsArraySum, directPaid, overridePaid);
+  if (paidAmount === 0 && tenant.isPaid) {
     paidAmount = totalDue;
   }
 
