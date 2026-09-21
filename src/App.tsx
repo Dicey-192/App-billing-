@@ -11,7 +11,6 @@ import { Property, Tenant, AppData, PaymentRecord, BillingVerificationIssue } fr
 import { Plus, Search, Filter, Download, MoreVertical, Trash2, Edit2, AlertCircle, FileText, CheckCircle2, LayoutGrid, List, Home, History, Upload, Users, Undo2, Redo2, Database, Calendar, CreditCard, MessageCircle, Send, ArrowDownUp, Clipboard, ChevronRight, X, Check, Bell, ShieldAlert, Cloud, CloudUpload, ExternalLink, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReceiptTemplate } from './components/ReceiptTemplate';
-import { AIAssistant } from './components/AIAssistant';
 import html2canvas from 'html2canvas';
 import NepaliDate from 'nepali-date-converter';
 import { LoginScreen } from './components/LoginScreen';
@@ -348,7 +347,7 @@ const preCacheReceipts = async (tenantsList: any[], monthName: string) => {
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
-import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal, BillingVerificationModal } from './components/Modals';
+import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, BulkTableModal, PaymentModal, TenantProfileModal, BillingVerificationModal } from './components/Modals';
 
 export default function App() {
   // Step-by-step backward redirection & history stack tracking
@@ -1378,27 +1377,22 @@ export default function App() {
     return alerts;
   }, [tenants, properties]);
 
-  // Month detection effect
+  // Month detection effect - strictly sets initial active month if empty; never auto-prompts on month change
   useEffect(() => {
     if (properties.length === 0) return;
     
-    let currentMonth = '';
-    if (calendarSystem === 'BS') {
-      const nd = new NepaliDate();
-      currentMonth = `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
-    } else {
-      const d = new Date();
-      currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    }
-    
     if (!data.activeMonth) {
-      setActiveMonth(currentMonth);
-    } else if (data.activeMonth !== currentMonth && data.dismissedMonth !== currentMonth) {
-      if (!rolloverPrompt.open || rolloverPrompt.month !== currentMonth) {
-        setRolloverPrompt({ open: true, month: currentMonth });
+      let currentMonth = '';
+      if (calendarSystem === 'BS') {
+        const nd = new NepaliDate();
+        currentMonth = `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
+      } else {
+        const d = new Date();
+        currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       }
+      setActiveMonth(currentMonth);
     }
-  }, [data.activeMonth, data.dismissedMonth, properties.length, setActiveMonth, rolloverPrompt.open, rolloverPrompt.month, calendarSystem]);
+  }, [data.activeMonth, properties.length, setActiveMonth, calendarSystem]);
 
   // ... rest of useMemo ...
   const [searchQuery, setSearchQuery] = useState('');
@@ -2037,7 +2031,7 @@ export default function App() {
 
       <Sidebar currentView={currentView} setView={setView} onFabClick={handleFabClick} />
       
-      <main className="flex-1 flex flex-col p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full z-10">
+      <main className="flex-1 flex flex-col p-4 md:p-8 pb-40 md:pb-40 max-w-7xl mx-auto w-full z-10">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-white/5">
           <div className="flex items-center gap-4">
             <div className="w-1.5 h-8 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
@@ -2295,6 +2289,8 @@ export default function App() {
                 recalculateBalances={recalculateBalances}
                 showToast={showToast}
                 updateTenant={updateTenant}
+                updateTenants={updateTenants}
+                rollover={rollover}
                 addHistory={addHistory}
                 history={history}
                 downloadReceipt={downloadReceipt}
@@ -2385,18 +2381,6 @@ export default function App() {
           });
         })()}
       </div>
-
-      {/* Sentient AI Concierge Assistant "Aurelia" */}
-      <AIAssistant 
-        tenants={tenants}
-        properties={properties}
-        history={history}
-        activeMonth={data.activeMonth}
-        updateTenant={(tid, up) => {
-          pushToUndo();
-          updateTenant(tid, up);
-        }}
-      />
 
       {/* Modals */}
       {profileModal.open && profileModal.tenant && profileModal.property && (
@@ -2499,19 +2483,6 @@ export default function App() {
         recalculateBalances={recalculateBalances}
       />
 
-      <RolloverPromptModal 
-        isOpen={rolloverPrompt.open}
-        month={rolloverPrompt.month}
-        onClose={() => {
-          dismissRollover(rolloverPrompt.month);
-          setRolloverPrompt({ ...rolloverPrompt, open: false });
-        }}
-        onConfirm={(carryForward: boolean) => {
-          handleRollover(rolloverPrompt.month, carryForward);
-          setRolloverPrompt({ ...rolloverPrompt, open: false });
-          setUndoStack([]); // Clear undo as requested
-        }}
-      />
 
       <BillingVerificationModal
         isOpen={!!verificationErrors && verificationErrors.length > 0}
@@ -2666,7 +2637,7 @@ function LegacyDashboardPlaceholder({ data, setBatchModal, setBulkTableModal, pr
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#D4AF37] animate-pulse shadow-[0_0_12px_#D4AF37]" />
-              <span className="text-[10px] uppercase tracking-[0.25em] text-[#D4AF37] font-mono font-bold">AURELIA DEPOSITORY PROTOCOL</span>
+              <span className="text-[10px] uppercase tracking-[0.25em] text-[#D4AF37] font-mono font-bold">RENTFLO DEPOSITORY PROTOCOL</span>
             </div>
             <h2 className="text-2xl md:text-3xl font-light font-serif text-[#FFFBF0]">
               Welcome Back, <span className="font-semibold text-white">Chief Commander</span>
@@ -4732,6 +4703,4 @@ function _DeprecatedSettingsView({
     </div>
   );
 }
-
-console.log('✨ AI Assistant Awakened — TenantBilling Elite is now sentient — TenantBilling Elite is now sentient');
 

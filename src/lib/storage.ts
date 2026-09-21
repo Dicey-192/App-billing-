@@ -8,7 +8,6 @@ const INITIAL_PLAN: SubscriptionPlan = {
   name: 'Unlimited',
   maxProperties: 999999,
   maxTenants: 999999,
-  aiAssistant: true,
 };
 
 const INITIAL_DATA: AppData = {
@@ -105,7 +104,9 @@ export function performRecalculation(prev: AppData): AppData {
   });
 
   const finalTenants = newTenants.map(t => {
-    let openingBalance = tenantBalances.has(t.id) ? tenantBalances.get(t.id)! : t.previousDues;
+    let openingBalance = (t.previousDues !== undefined && typeof t.previousDues === 'number' && !isNaN(t.previousDues))
+      ? t.previousDues
+      : (tenantBalances.has(t.id) ? tenantBalances.get(t.id)! : 0);
     if (t.manualOverrides?.openingBalance !== undefined) {
       openingBalance = t.manualOverrides.openingBalance;
     }

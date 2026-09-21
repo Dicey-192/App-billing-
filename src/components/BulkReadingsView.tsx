@@ -3,6 +3,7 @@ import {
   ArrowLeft, 
   Search, 
   RotateCcw, 
+  RotateCw,
   FileSpreadsheet, 
   Zap, 
   Droplets, 
@@ -25,7 +26,7 @@ import {
   Copy
 } from 'lucide-react';
 import { Tenant, Property, BillHistoryEntry } from '../types';
-import { getTenantBillingDetails } from '../lib/utils';
+import { getTenantBillingDetails, formatCurrency } from '../lib/utils';
 import { ReceiptTemplate } from './ReceiptTemplate';
 
 export interface BulkReadingsViewProps {
@@ -39,6 +40,8 @@ export interface BulkReadingsViewProps {
   recalculateBalances?: () => void;
   showToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
   updateTenant?: (id: string, updates: Partial<Tenant>) => void;
+  updateTenants?: (updates: { id: string; updates: Partial<Tenant> }[]) => void;
+  rollover?: (month: string, historyEntries: BillHistoryEntry[], updates: { id: string; updates: Partial<Tenant> }[]) => void;
   addHistory?: (entry: BillHistoryEntry) => void;
   history?: BillHistoryEntry[];
   downloadReceipt?: (tenant: any) => Promise<void>;
@@ -46,6 +49,64 @@ export interface BulkReadingsViewProps {
 
 // Local storage key for confirmed/generated bills in a cycle
 const getGeneratedStorageKey = (month: string) => `rentflo_generated_bills_${month}`;
+
+export function getNextBillingPeriod(currentPeriod: string): string {
+  if (!currentPeriod || typeof currentPeriod !== 'string') {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  const trimmed = currentPeriod.trim();
+
+  // 1. BS-YYYY-MM (e.g. BS-2083-05)
+  const bsMatch = trimmed.match(/^BS-(\d{4})-(\d{1,2})$/i);
+  if (bsMatch) {
+    let year = parseInt(bsMatch[1], 10);
+    let month = parseInt(bsMatch[2], 10);
+    if (month >= 12) {
+      year += 1;
+      month = 1;
+    } else {
+      month += 1;
+    }
+    return `BS-${year}-${String(month).padStart(2, '0')}`;
+  }
+
+  // 2. YYYY-MM (e.g. 2026-05)
+  const ymMatch = trimmed.match(/^(\d{4})-(\d{1,2})$/);
+  if (ymMatch) {
+    let year = parseInt(ymMatch[1], 10);
+    let month = parseInt(ymMatch[2], 10);
+    if (month >= 12) {
+      year += 1;
+      month = 1;
+    } else {
+      month += 1;
+    }
+    return `${year}-${String(month).padStart(2, '0')}`;
+  }
+
+  // 3. Month YYYY (e.g. "May 2026")
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  const myMatch = trimmed.match(/^([a-zA-Z]+)\s+(\d{4})$/);
+  if (myMatch) {
+    const mName = myMatch[1].toLowerCase();
+    let year = parseInt(myMatch[2], 10);
+    const mIdx = monthNames.findIndex(m => m.toLowerCase() === mName);
+    if (mIdx !== -1) {
+      if (mIdx === 11) {
+        return `January ${year + 1}`;
+      } else {
+        return `${monthNames[mIdx + 1]} ${year}`;
+      }
+    }
+  }
+
+  return `${trimmed}-Next`;
+}
 
 export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   tenants,
@@ -58,6 +119,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   recalculateBalances,
   showToast,
   updateTenant,
+  updateTenants,
+  rollover,
   addHistory,
   downloadReceipt
 }) => {
@@ -67,6 +130,15 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   // Selected Billing Period
   const [selectedPeriod, setSelectedPeriod] = useState<string>(activeMonth || 'BS-2083-05');
   const [isPeriodPickerOpen, setIsPeriodPickerOpen] = useState<boolean>(false);
+
+  // Manual Billing Cycle Rollover Modal state
+  const [isRolloverModalOpen, setIsRolloverModalOpen] = useState(false);
+  const [rolloverTargetMonth, setRolloverTargetMonth] = useState<string>(() => getNextBillingPeriod(activeMonth || 'BS-2083-05'));
+
+  // Sync rolloverTargetMonth when selectedPeriod updates
+  useEffect(() => {
+    setRolloverTargetMonth(getNextBillingPeriod(selectedPeriod));
+  }, [selectedPeriod]);
 
   // Search & Filters for Entry tab
   const [searchQuery, setSearchQuery] = useState('');
@@ -513,16 +585,207 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     if (showToast) showToast('Reset all readings to previous cycle values.');
   };
 
-  const periodOptions = [
-    'BS-2083-05',
-    'BS-2083-04',
-    'BS-2083-03',
-    'BS-2083-02',
-    'BS-2083-01',
-    'BS-2082-12',
-    'BS-2082-11',
-    'BS-2082-10',
-  ];
+  // Rollover preview calculations for confirmation dialog
+  const rolloverPreviewList = useMemo(() => {
+    return tenants.map(t => {
+      const prop = propertyMap.get(t.propertyId) || properties[0] || {
+        id: t.propertyId,
+        name: 'Property',
+        address: '',
+        electricRate: 14,
+        waterRate: 300,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        defaultExpenses: []
+      };
+
+      const r = getReadingsForTenant(t.id);
+      const effectiveCurrElec = r.numElec ?? (t.currElecReading > 0 ? t.currElecReading : 0);
+      const effectiveCurrWater = r.numWater ?? (t.currWaterReading > 0 ? t.currWaterReading : 0);
+
+      const virtualTenant: Tenant = {
+        ...t,
+        currElecReading: effectiveCurrElec,
+        currWaterReading: effectiveCurrWater
+      };
+
+      const billing = getTenantBillingDetails(virtualTenant, prop);
+      const carriedArrears = billing.outstandingBalance;
+
+      // 1. Current Electricity -> Previous Electricity (or keep previous if no current entered)
+      const newPrevElec = effectiveCurrElec > 0 ? effectiveCurrElec : t.prevElecReading;
+      // 2. Current Water -> Previous Water (or keep previous if no current entered)
+      const newPrevWater = effectiveCurrWater > 0 ? effectiveCurrWater : t.prevWaterReading;
+
+      return {
+        tenant: t,
+        property: prop,
+        currentElec: effectiveCurrElec,
+        currentWater: effectiveCurrWater,
+        newPrevElec,
+        newPrevWater,
+        carriedArrears,
+        contractRent: t.rent
+      };
+    });
+  }, [tenants, propertyMap, properties, getReadingsForTenant]);
+
+  const totalCarriedArrears = useMemo(() => {
+    return rolloverPreviewList.reduce((sum, item) => sum + item.carriedArrears, 0);
+  }, [rolloverPreviewList]);
+
+  const totalNewMonthRent = useMemo(() => {
+    return rolloverPreviewList.reduce((sum, item) => sum + item.contractRent, 0);
+  }, [rolloverPreviewList]);
+
+  // Execute manual month rollover
+  const handleExecuteRollover = () => {
+    const targetMonth = rolloverTargetMonth.trim();
+    if (!targetMonth) {
+      if (showToast) showToast('Please specify a valid next billing month name.', 'error');
+      return;
+    }
+
+    if (tenants.length === 0) {
+      if (showToast) showToast('No tenants available to roll over.', 'error');
+      return;
+    }
+
+    // Step 1: Create historical snapshot entries for ending cycle
+    const historyEntries: BillHistoryEntry[] = [];
+    properties.forEach(prop => {
+      const propTenants = rolloverPreviewList
+        .filter(item => item.tenant.propertyId === prop.id)
+        .map(item => ({
+          id: item.tenant.id,
+          name: item.tenant.name,
+          roomNumber: item.tenant.roomNumber,
+          rent: item.tenant.rent,
+          previousDues: item.tenant.previousDues,
+          prevElecReading: item.tenant.prevElecReading,
+          currElecReading: item.currentElec,
+          prevWaterReading: item.tenant.prevWaterReading,
+          currWaterReading: item.currentWater,
+          isPaid: item.carriedArrears <= 0,
+          paidAmount: item.tenant.paidAmount || 0,
+          expenses: item.tenant.expenses,
+          manualOverrides: item.tenant.manualOverrides ? { ...item.tenant.manualOverrides } : undefined
+        }));
+
+      if (propTenants.length > 0) {
+        historyEntries.push({
+          id: `snapshot_${prop.id}_${selectedPeriod}_${Date.now()}`,
+          propertyId: prop.id,
+          month: selectedPeriod,
+          snapshot: {
+            property: { ...prop },
+            tenants: propTenants as any
+          },
+          createdAt: Date.now()
+        });
+      }
+    });
+
+    // Step 2: Build updates according to user Order 3:
+    // 1. Move every tenant’s Current Electricity Reading → Previous Electricity Reading
+    // 2. Move every tenant’s Current Water Reading → Previous Water Reading
+    // 3. Clear (empty) all Current Electricity and Current Water reading fields (set to 0)
+    // 4. Carry forward the correct Arrears / Outstanding Dues to the new month without changing or rewriting amounts
+    // 5. Apply the new month’s Rent for each tenant
+    const tenantUpdates: { id: string; updates: Partial<Tenant> }[] = rolloverPreviewList.map(item => {
+      return {
+        id: item.tenant.id,
+        updates: {
+          prevElecReading: item.newPrevElec,
+          currElecReading: 0,
+          prevWaterReading: item.newPrevWater,
+          currWaterReading: 0,
+          previousDues: item.carriedArrears,
+          isPaid: item.carriedArrears <= 0,
+          paidAmount: 0,
+          payments: [],
+          rent: item.contractRent,
+          manualOverrides: undefined,
+          updatedAt: Date.now()
+        }
+      };
+    });
+
+    // Step 6: Update billing period / cycle to the new month
+    if (rollover) {
+      rollover(targetMonth, historyEntries, tenantUpdates);
+    } else if (updateTenants) {
+      updateTenants(tenantUpdates);
+      if (onMonthChange) onMonthChange(targetMonth);
+      if (historyEntries.length > 0 && addHistory) {
+        historyEntries.forEach(h => addHistory(h));
+      }
+    } else if (updateTenant) {
+      tenantUpdates.forEach(u => updateTenant(u.id, u.updates));
+      if (onMonthChange) onMonthChange(targetMonth);
+      if (historyEntries.length > 0 && addHistory) {
+        historyEntries.forEach(h => addHistory(h));
+      }
+    }
+
+    // Step 7: Clear all local current readings in BulkReadingsView so all fields are completely blank for typing
+    const emptyMap: { [id: string]: { elec: string; water: string } } = {};
+    tenants.forEach(t => {
+      emptyMap[t.id] = { elec: '', water: '' };
+    });
+    setInputMap(emptyMap);
+
+    // Reset generated bills set for the new cycle
+    setGeneratedTenantIds(new Set());
+    try {
+      localStorage.removeItem(getGeneratedStorageKey(targetMonth));
+    } catch (e) {
+      console.error(e);
+    }
+
+    // Update active view period
+    setSelectedPeriod(targetMonth);
+    if (onMonthChange) {
+      onMonthChange(targetMonth);
+    }
+
+    // Audit trail logging
+    if (addAuditLog) {
+      rolloverPreviewList.forEach(item => {
+        addAuditLog(
+          item.tenant.id,
+          item.tenant.name,
+          targetMonth,
+          'Manual Month Rollover',
+          `Prev Elec: ${item.tenant.prevElecReading}, Curr Elec: ${item.currentElec} | Prev Water: ${item.tenant.prevWaterReading}, Curr Water: ${item.currentWater} | Arrears: ${item.tenant.previousDues}`,
+          `New Prev Elec: ${item.newPrevElec}, Curr Elec: [Empty] | New Prev Water: ${item.newPrevWater}, Curr Water: [Empty] | Carried Arrears: ${item.carriedArrears}`
+        );
+      });
+    }
+
+    if (recalculateBalances) {
+      recalculateBalances();
+    }
+
+    // Close modal
+    setIsRolloverModalOpen(false);
+
+    // Show clear success message as ordered
+    if (showToast) {
+      showToast(
+        `Billing cycle rolled over to ${targetMonth} successfully! Current readings moved to previous, current fields cleared, and arrears carried forward.`,
+        'success'
+      );
+    }
+  };
+
+  const periodOptions = useMemo(() => {
+    const list = [selectedPeriod, getNextBillingPeriod(selectedPeriod)];
+    ['BS-2083-06', 'BS-2083-05', 'BS-2083-04', 'BS-2083-03', 'BS-2083-02', 'BS-2083-01', 'BS-2082-12'].forEach(p => {
+      if (!list.includes(p)) list.push(p);
+    });
+    return Array.from(new Set(list));
+  }, [selectedPeriod]);
 
   // Currently reviewed tenant object
   const activeReviewTenant = reviewTenantId ? tenantMap.get(reviewTenantId) : null;
@@ -629,6 +892,20 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
               <span className="hidden md:inline">Reset to Prev</span>
             </button>
 
+            {/* Roll Over to Next Month Button (Order 2) */}
+            <button
+              type="button"
+              onClick={() => {
+                setRolloverTargetMonth(getNextBillingPeriod(selectedPeriod));
+                setIsRolloverModalOpen(true);
+              }}
+              className="h-10 sm:h-11 px-3.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-black tracking-wide transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/10"
+              title="Roll over readings and advance to next month"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Roll Over to Next Month</span>
+            </button>
+
             {/* Save In-Progress Readings */}
             <button
               type="button"
@@ -702,7 +979,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-5 pb-32">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-5 pb-52 sm:pb-60">
 
         {/* Flexible Entry Rule Banner Notification */}
         <div className="bg-[#121212] border border-white/10 rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3 text-xs">
@@ -1337,8 +1614,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
             - Skip / Back
          ======================================================== */}
       {reviewTenantId && activeReviewTenant && activeReviewBilling && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-[#111111] border-2 border-white/15 rounded-3xl max-w-2xl w-full p-5 sm:p-8 space-y-6 shadow-2xl relative my-auto max-h-[92vh] flex flex-col justify-between overflow-y-auto">
+        <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 pb-32 sm:pb-40 overflow-y-auto">
+          <div className="bg-[#111111] border-2 border-white/15 rounded-3xl max-w-2xl w-full p-5 sm:p-8 space-y-6 shadow-2xl relative my-auto max-h-[calc(100vh-140px)] flex flex-col justify-between overflow-y-auto">
             
             {/* Modal Header */}
             <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
@@ -1511,7 +1788,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
             </div>
 
             {/* Bottom Actions: Skip / Back vs Confirm & Generate */}
-            <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/10">
+            <div className="flex items-center justify-between gap-3 pt-4 pb-1 border-t border-white/10 shrink-0">
               
               {/* Skip / Back Button */}
               <button
@@ -1539,6 +1816,237 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         </div>
       )}
 
+      {/* ========================================================
+          MANUAL BILLING CYCLE ROLLOVER MODAL (ORDER 2, 3, 4)
+          - Strong safety confirmation question
+          - From / To month with editable target month field
+          - Summary metrics (Tenants, Carried Arrears, New Month Base Rent)
+          - Transparent 6-step execution breakdown
+          - Tenant preview table (room, name, elec, water, arrears, rent)
+          - Cancel and Confirm buttons
+         ======================================================== */}
+      {isRolloverModalOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 pb-32 sm:pb-40 overflow-y-auto">
+          <div className="bg-[#121415] border-2 border-amber-500/40 rounded-3xl max-w-3xl w-full p-5 sm:p-7 space-y-5 shadow-2xl relative my-auto max-h-[calc(100vh-140px)] flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shadow-inner">
+                  <RotateCw className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                    Roll Over to Next Month
+                  </h3>
+                  <p className="text-xs text-neutral-400 font-medium">
+                    Manual Billing Cycle Advance & Meter Reading Reset
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsRolloverModalOpen(false)}
+                className="h-9 w-9 bg-[#1c1c1c] hover:bg-white/10 border border-white/10 rounded-xl text-neutral-400 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+                title="Close modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Content Container */}
+            <div className="overflow-y-auto space-y-4 pr-1 text-xs">
+              
+              {/* Strong Confirmation Banner (Order 4 requirement) */}
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 text-amber-200 flex items-start gap-3 shadow-inner">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <strong className="text-amber-300 font-black text-sm block">
+                    This will move all current readings to previous and start a new month. Continue?
+                  </strong>
+                  <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                    This is a one-way billing cycle transition. Meter readings will advance, current reading fields will be emptied for your new entries, and all outstanding arrears will be carried forward without alteration.
+                  </p>
+                </div>
+              </div>
+
+              {/* Cycle Transition Controls */}
+              <div className="p-4 rounded-2xl bg-[#171717] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400 block mb-1">
+                    Current Billing Cycle
+                  </span>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 font-mono font-bold text-amber-400 text-sm">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{selectedPeriod}</span>
+                  </div>
+                </div>
+
+                <div className="text-neutral-500 hidden sm:block">
+                  <ArrowRight className="w-6 h-6 text-neutral-500" />
+                </div>
+
+                <div className="flex-1 sm:max-w-xs">
+                  <label htmlFor="target-rollover-cycle-input" className="text-[10px] font-black uppercase tracking-wider text-neutral-300 block mb-1">
+                    Next Billing Cycle Period
+                  </label>
+                  <input
+                    id="target-rollover-cycle-input"
+                    type="text"
+                    value={rolloverTargetMonth}
+                    onChange={(e) => setRolloverTargetMonth(e.target.value)}
+                    placeholder="e.g. BS-2083-06 or 2026-06"
+                    className="w-full h-10 px-3 rounded-xl bg-[#0e0e0e] border border-amber-500/50 focus:border-amber-400 text-white font-mono font-bold text-sm focus:outline-none shadow-inner"
+                  />
+                </div>
+              </div>
+
+              {/* 3 Metric Summary Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-2xl bg-[#171717] border border-white/10 space-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400">
+                    Tenants Affected
+                  </span>
+                  <div className="text-lg font-black text-white font-mono">
+                    {tenants.length}
+                  </div>
+                  <div className="text-[10px] text-neutral-500">
+                    All tenants in property database
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-[#171717] border border-amber-500/25 space-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                    Carried Forward Arrears
+                  </span>
+                  <div className="text-lg font-black text-amber-300 font-mono">
+                    {formatCurrency(totalCarriedArrears)}
+                  </div>
+                  <div className="text-[10px] text-neutral-400">
+                    Exact dues preserved into new month
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-[#171717] border border-emerald-500/25 space-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                    Next Month Base Rent
+                  </span>
+                  <div className="text-lg font-black text-emerald-300 font-mono">
+                    {formatCurrency(totalNewMonthRent)}
+                  </div>
+                  <div className="text-[10px] text-neutral-400">
+                    Contract rent applied for new month
+                  </div>
+                </div>
+              </div>
+
+              {/* Exact 6-Step Execution Guarantee (User Order 3) */}
+              <div className="p-4 rounded-2xl bg-[#151515] border border-white/10 space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400 block">
+                  Rollover Execution Protocol
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-neutral-300">
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">1</span>
+                    <span><strong>Current Electricity</strong> moves to <strong>Previous Electricity</strong></span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">2</span>
+                    <span><strong>Current Water</strong> moves to <strong>Previous Water</strong></span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">3</span>
+                    <span><strong>Clear current fields:</strong> inputs reset to empty for manual typing</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">4</span>
+                    <span><strong>Carried Arrears:</strong> Exact outstanding dues carried without alteration</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">5</span>
+                    <span><strong>Base Rent:</strong> Next month's contract rent loaded per tenant</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">6</span>
+                    <span><strong>Billing Period:</strong> Cycle officially switches to <strong>{rolloverTargetMonth || 'Next Month'}</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tenants Preview Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 px-1">
+                  <span>Tenant Breakdown Preview ({tenants.length})</span>
+                  <span className="text-neutral-500 font-normal text-[10px]">Readings advancing to previous</span>
+                </div>
+                <div className="border border-white/10 rounded-2xl overflow-hidden max-h-48 overflow-y-auto bg-[#0d0d0d]">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead className="sticky top-0 bg-[#161616] text-[9px] uppercase tracking-wider text-neutral-400 font-black border-b border-white/10">
+                      <tr>
+                        <th className="py-2 px-3">Room & Tenant</th>
+                        <th className="py-2 px-3">Elec (Cur → Prev)</th>
+                        <th className="py-2 px-3">Water (Cur → Prev)</th>
+                        <th className="py-2 px-3 text-right">Carried Arrears</th>
+                        <th className="py-2 px-3 text-right">Base Rent</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-mono">
+                      {rolloverPreviewList.map(item => (
+                        <tr key={`rollover-prev-${item.tenant.id}`} className="hover:bg-white/[0.02]">
+                          <td className="py-2 px-3 font-sans font-medium text-white">
+                            <span className="font-mono text-amber-400 font-bold mr-1.5">{item.tenant.roomNumber}</span>
+                            {item.tenant.name}
+                          </td>
+                          <td className="py-2 px-3 text-neutral-300">
+                            <span className="text-neutral-500">{item.tenant.currElecReading || item.tenant.prevElecReading}</span>
+                            <span className="mx-1 text-neutral-600">→</span>
+                            <span className="text-amber-400 font-bold">{item.newPrevElec}</span>
+                          </td>
+                          <td className="py-2 px-3 text-neutral-300">
+                            <span className="text-neutral-500">{item.tenant.currWaterReading || item.tenant.prevWaterReading}</span>
+                            <span className="mx-1 text-neutral-600">→</span>
+                            <span className="text-amber-400 font-bold">{item.newPrevWater}</span>
+                          </td>
+                          <td className="py-2 px-3 text-right text-amber-300 font-bold">
+                            {formatCurrency(item.carriedArrears)}
+                          </td>
+                          <td className="py-2 px-3 text-right text-neutral-300">
+                            {formatCurrency(item.contractRent)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="flex items-center justify-end gap-3 pt-4 pb-1 border-t border-white/10 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsRolloverModalOpen(false)}
+                className="h-11 px-5 rounded-xl bg-[#1c1c1c] hover:bg-white/10 border border-white/15 text-neutral-300 hover:text-white font-bold text-xs cursor-pointer transition-all active:scale-95"
+              >
+                No, Keep Current Month
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExecuteRollover}
+                className="h-11 px-6 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 shadow-lg shadow-amber-500/25 flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Confirm & Roll Over to {rolloverTargetMonth || 'Next Month'}</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* Hidden container to mount ReceiptTemplate for html2canvas live receipt export */}
       {tenants.map(t => {
         const prop = propertyMap.get(t.propertyId);
@@ -1550,8 +2058,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         );
       })}
 
-      {/* Fixed Footer Bar for Quick Navigation / Global Save */}
-      <footer className="fixed bottom-0 left-0 right-0 z-20 bg-[#111111]/95 backdrop-blur-xl border-t border-white/10 px-4 py-3 sm:px-8 shadow-2xl">
+      {/* Fixed Footer Bar for Quick Navigation / Global Save (lifted above bottom navigation bar) */}
+      <footer className="fixed bottom-24 left-0 right-0 z-40 bg-[#111111]/95 backdrop-blur-xl border-t border-b border-white/10 px-4 py-2.5 sm:px-8 shadow-2xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-xs">
           
           <div className="flex items-center gap-2 font-mono">
@@ -1574,6 +2082,19 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setRolloverTargetMonth(getNextBillingPeriod(selectedPeriod));
+                setIsRolloverModalOpen(true);
+              }}
+              className="h-10 px-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95 hidden sm:flex items-center gap-1.5"
+              title="Roll over to next month"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-amber-400" />
+              <span>Roll Over</span>
+            </button>
 
             <button
               type="button"

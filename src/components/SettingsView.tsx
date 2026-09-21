@@ -217,7 +217,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div className="space-y-6 text-left">
+    <div className="space-y-6 text-left pb-16">
       {/* Page Header */}
       <div className="border-b border-white/5 pb-4">
         <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#A3A3A3] font-mono leading-none">System Settings</p>

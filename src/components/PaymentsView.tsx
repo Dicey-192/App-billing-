@@ -197,7 +197,7 @@ export const PaymentsView: React.FC<PaymentsViewProps> = ({
   };
 
   return (
-    <div className="space-y-6 text-left">
+    <div className="space-y-6 text-left pb-16">
       {/* 1. Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
         <div>

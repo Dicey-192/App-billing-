@@ -95,7 +95,6 @@ export interface SubscriptionPlan {
   name: 'Free' | 'Pro' | 'Unlimited';
   maxProperties: number;
   maxTenants: number;
-  aiAssistant: boolean;
 }
 
 export interface AppData {

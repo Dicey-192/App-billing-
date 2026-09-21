@@ -333,7 +333,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
             transition={{ duration: 0.2 }}
-            className="space-y-8"
+            className="space-y-8 pb-12"
           >
             {/* Element 1: Welcome Header */}
             <div className="bg-gradient-to-r from-white/[0.02] to-transparent p-6 rounded-3xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">

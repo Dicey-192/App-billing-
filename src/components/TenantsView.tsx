@@ -104,62 +104,6 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   const [showEditContractModal, setShowEditContractModal] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Rollover Readings handler
-  const handleRolloverReadings = () => {
-    const confirmed = window.confirm(
-      "This will set current readings as previous and prepare for new entries. Continue?"
-    );
-    if (!confirmed) return;
-
-    const targetTenants = (allTenants && allTenants.length > 0) ? allTenants : tenants;
-
-    if (targetTenants.length === 0) {
-      if (showToast) showToast("No tenants available for rollover.");
-      return;
-    }
-
-    const updates = targetTenants.map(t => ({
-      id: t.id,
-      updates: {
-        prevElecReading: t.currElecReading,
-        currElecReading: t.currElecReading,
-        prevWaterReading: t.currWaterReading,
-        currWaterReading: t.currWaterReading,
-        manualOverrides: t.manualOverrides ? {
-          ...t.manualOverrides,
-          electricityCharges: undefined,
-          waterCharges: undefined
-        } : undefined
-      }
-    }));
-
-    if (updateTenants) {
-      updateTenants(updates);
-    } else {
-      updates.forEach(u => updateTenant(u.id, u.updates));
-    }
-
-    // Log action in audit trail
-    targetTenants.forEach(t => {
-      addAuditLog?.(
-        t.id,
-        t.name,
-        activeMonth || 'Current Cycle',
-        'Rollover Readings',
-        `Elec Prev: ${t.prevElecReading}, Curr: ${t.currElecReading} | Water Prev: ${t.prevWaterReading}, Curr: ${t.currWaterReading}`,
-        `Rolled Over - Elec Prev: ${t.currElecReading}, Curr: ${t.currElecReading} | Water Prev: ${t.currWaterReading}, Curr: ${t.currWaterReading}`
-      );
-    });
-
-    if (recalculateBalances) {
-      recalculateBalances();
-    }
-
-    if (showToast) {
-      showToast("Readings rolled over successfully. Ready for new entries.");
-    }
-  };
-
   // Export CSV Handler
   const handleExportCSV = () => {
     const targetList = selectedTenantIds.size > 0 
@@ -359,7 +303,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
-        className="space-y-6 text-left max-w-6xl mx-auto pb-12"
+        className="space-y-6 text-left max-w-6xl mx-auto pb-20"
       >
         {/* Top Navigation Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#111111] p-5 rounded-3xl border border-white/10 shadow-lg">
@@ -679,7 +623,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   }
 
   return (
-    <div className="space-y-6 text-left max-w-6xl mx-auto">
+    <div className="space-y-6 text-left max-w-6xl mx-auto pb-20">
       {/* 1. Header Area with Bulk Operations Contextual Menu */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
         <div>
@@ -740,12 +684,12 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
           </button>
 
           <button
-            onClick={handleRolloverReadings}
+            onClick={() => onNavigateToBulkReadings ? onNavigateToBulkReadings() : setBulkTableModal({ open: true })}
             className="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-sm"
-            title="Rollover electric and water readings for all tenants"
+            title="Roll over readings and advance to next month in Bulk Readings"
           >
             <RotateCw className="w-3.5 h-3.5 text-amber-400" />
-            Rollover Readings
+            Roll Over to Next Month
           </button>
 
           <button

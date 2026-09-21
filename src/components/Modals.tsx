@@ -23,7 +23,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pb-32 sm:pb-36 overflow-y-auto">
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
@@ -36,17 +36,17 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             animate={{ opacity: 1, scale: 1, y: 0 }} 
             exit={{ opacity: 0, scale: 0.95, y: 20 }} 
             className={cn(
-              "relative glass-panel rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full overflow-hidden flex flex-col max-h-[90vh] border border-white/10",
+              "relative glass-panel rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full overflow-hidden flex flex-col max-h-[calc(100vh-140px)] border border-white/10 my-auto",
               title.includes("Bulk") || title.includes("Summary") || title.includes("Historical") ? "max-w-5xl" : "max-w-lg"
             )}
           >
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5">
+            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5 shrink-0">
               <h3 className="text-2xl font-bold text-white tracking-tight">{title}</h3>
               <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-xl text-slate-500 hover:text-white transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-8 overflow-y-auto custom-scrollbar">
+            <div className="p-8 pb-12 overflow-y-auto custom-scrollbar">
               {children}
             </div>
           </motion.div>
@@ -564,7 +564,7 @@ export const BatchReadingModal: React.FC<{
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pb-32 sm:pb-36 overflow-y-auto">
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
@@ -576,9 +576,9 @@ export const BatchReadingModal: React.FC<{
             initial={{ opacity: 0, scale: 0.95, y: 20 }} 
             animate={{ opacity: 1, scale: 1, y: 0 }} 
             exit={{ opacity: 0, scale: 0.95, y: 20 }} 
-            className="relative bg-slate-900 border border-white/10 rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]"
+            className="relative bg-slate-900 border border-white/10 rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full max-w-4xl overflow-hidden flex flex-col max-h-[calc(100vh-140px)] my-auto"
           >
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5">
+            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5 shrink-0">
               <div>
                 <h3 className="text-2xl font-bold text-white tracking-tight">Batch Reading Entry</h3>
                 <p className="text-slate-500 text-xs mt-1 uppercase tracking-widest">Update meters for all tenants after rollover</p>
@@ -632,10 +632,10 @@ export const BatchReadingModal: React.FC<{
               </table>
             </div>
 
-            <div className="p-8 border-t border-white/10 bg-white/5">
+            <div className="p-8 pb-10 border-t border-white/10 bg-white/5 shrink-0">
               <button 
                 onClick={handleSubmit}
-                className="btn btn-primary w-full py-4 uppercase font-bold tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)]"
+                className="btn btn-primary w-full py-4 uppercase font-bold tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)] cursor-pointer"
               >
                 Apply to All {tenants.length} Tenants
               </button>
