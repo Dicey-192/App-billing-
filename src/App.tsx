@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Sidebar, ViewType } from './components/Navigation';
 import { useStorage } from './lib/storage';
 import { formatCurrency, generateId, cn, getTenantBillingDetails, formatMonthStr, verifyPreviousBillingCycle } from './lib/utils';
@@ -351,7 +351,22 @@ import { saveAs } from 'file-saver';
 import { PropertyModal, TenantModal, BatchReadingModal, HistoryDetailModal, RolloverPromptModal, BulkTableModal, PaymentModal, TenantProfileModal, BillingVerificationModal } from './components/Modals';
 
 export default function App() {
-  const [currentView, setView] = useState<ViewType>('dashboard');
+  // Step-by-step backward redirection & history stack tracking
+  const [currentView, setCurrentViewRaw] = useState<ViewType>('dashboard');
+  const [viewingTenantId, setViewingTenantIdRaw] = useState<string | null>(null);
+
+  const navStateRef = useRef<{
+    step: number;
+    view: ViewType;
+    viewingTenantId: string | null;
+    hasModal: boolean;
+  }>({
+    step: 0,
+    view: 'dashboard',
+    viewingTenantId: null,
+    hasModal: false,
+  });
+
   const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading, calendarSystem, setCalendarSystem } = useStorage();
 
   // Authentication role states
@@ -390,6 +405,111 @@ export default function App() {
   const [bulkTableModal, setBulkTableModal] = useState<{ open: boolean }>({ open: false });
   const [historyModal, setHistoryModal] = useState<{ open: boolean; data?: any }>({ open: false });
   const [rolloverPrompt, setRolloverPrompt] = useState<{ open: boolean; month: string }>({ open: false, month: '' });
+
+  const closeAllModals = useCallback(() => {
+    setProfileModal({ open: false });
+    setPropertyModal({ open: false });
+    setTenantModal({ open: false });
+    setPaymentModal({ open: false });
+    setBatchModal({ open: false, tenants: [] });
+    setBulkTableModal({ open: false });
+    setHistoryModal({ open: false });
+    setRolloverPrompt({ open: false, month: '' });
+    setShowAlertsDropdown(false);
+    setShowPalette(false);
+  }, []);
+
+  const navigateTo = useCallback((nextView: ViewType, nextTenantId: string | null = null) => {
+    if (
+      navStateRef.current.view === nextView &&
+      navStateRef.current.viewingTenantId === nextTenantId &&
+      !navStateRef.current.hasModal
+    ) {
+      return;
+    }
+
+    const nextStep = navStateRef.current.step + 1;
+    const historyState = {
+      app: 'rentflo',
+      step: nextStep,
+      view: nextView,
+      viewingTenantId: nextTenantId,
+      hasModal: false,
+    };
+
+    try {
+      window.history.pushState(historyState, '');
+    } catch (e) {
+      console.error('[Navigation] pushState error:', e);
+    }
+
+    navStateRef.current = historyState;
+    setCurrentViewRaw(nextView);
+    setViewingTenantIdRaw(nextTenantId);
+    closeAllModals();
+  }, [closeAllModals]);
+
+  const handleGoBack = useCallback(() => {
+    if (navStateRef.current.step > 0) {
+      window.history.back();
+    } else {
+      closeAllModals();
+      setViewingTenantIdRaw(null);
+      setCurrentViewRaw('dashboard');
+    }
+  }, [closeAllModals]);
+
+  // Sync browser back/forward and hardware Back events
+  useEffect(() => {
+    const initialRootState = {
+      app: 'rentflo',
+      step: 0,
+      view: 'dashboard',
+      viewingTenantId: null,
+      hasModal: false,
+    };
+
+    try {
+      if (!window.history.state || window.history.state.app !== 'rentflo') {
+        window.history.replaceState(initialRootState, '');
+      } else {
+        navStateRef.current = window.history.state;
+        if (window.history.state.view) setCurrentViewRaw(window.history.state.view);
+        if (window.history.state.viewingTenantId) setViewingTenantIdRaw(window.history.state.viewingTenantId);
+      }
+    } catch (e) {
+      console.error('[Navigation] init state error:', e);
+    }
+
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state;
+
+      // If state is not our app or is empty, user is at the root and wants to exit/go back externally
+      if (!state || state.app !== 'rentflo') {
+        return;
+      }
+
+      navStateRef.current = state;
+
+      // If we stepped back to a state without modal, close any open modal
+      if (!state.hasModal) {
+        closeAllModals();
+      }
+
+      // Restore viewingTenantId (e.g. Back from tenant statement to tenant list)
+      setViewingTenantIdRaw(state.viewingTenantId || null);
+
+      // Restore active view (e.g. Back from Bulk Readings to Tenants)
+      if (state.view) {
+        setCurrentViewRaw(state.view);
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [closeAllModals]);
+
+  const setView = navigateTo;
   const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
   const [isBulkSending, setIsBulkSending] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
@@ -2149,21 +2269,35 @@ export default function App() {
                 printAllReceipts={handleBulkPrint}
                 addAuditLog={addAuditLog}
                 showToast={showToast}
-                onNavigateToBulkReadings={() => setView('bulk-readings')}
+                viewingTenantId={viewingTenantId}
+                setViewingTenantId={(tid) => {
+                  if (tid) {
+                    navigateTo('tenants', tid);
+                  } else {
+                    handleGoBack();
+                  }
+                }}
+                onBack={handleGoBack}
+                onNavigateToBulkReadings={() => navigateTo('bulk-readings')}
               />
             )}
             {currentView === 'bulk-readings' && (
               <BulkReadingsView
                 tenants={tenants}
                 properties={properties}
-                activeMonth={data.activeMonth || ''}
-                onBack={() => setView('tenants')}
+                activeMonth={data.activeMonth || 'BS-2083-05'}
+                onMonthChange={setActiveMonth}
+                onBack={handleGoBack}
                 onSave={(updates) => {
                   handleBatchSave(updates);
                 }}
                 addAuditLog={addAuditLog}
                 recalculateBalances={recalculateBalances}
                 showToast={showToast}
+                updateTenant={updateTenant}
+                addHistory={addHistory}
+                history={history}
+                downloadReceipt={downloadReceipt}
               />
             )}
             {currentView === 'payments' && (

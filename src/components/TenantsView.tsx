@@ -46,6 +46,9 @@ interface TenantsViewProps {
   addAuditLog?: (tenantId: string, tenantName: string, month: string, fieldName: string, oldValue: string, newValue: string) => void;
   showToast?: (msg: string, type?: any) => void;
   onNavigateToBulkReadings?: () => void;
+  viewingTenantId?: string | null;
+  setViewingTenantId?: (id: string | null) => void;
+  onBack?: () => void;
 }
 
 export const TenantsView: React.FC<TenantsViewProps> = ({
@@ -82,10 +85,21 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
   printAllReceipts,
   addAuditLog,
   showToast,
-  onNavigateToBulkReadings
+  onNavigateToBulkReadings,
+  viewingTenantId: controlledViewingTenantId,
+  setViewingTenantId: controlledSetViewingTenantId,
+  onBack
 }) => {
   const [focusedTenantId, setFocusedTenantId] = useState<string | null>(null);
-  const [viewingTenantId, setViewingTenantId] = useState<string | null>(null);
+  const [internalViewingTenantId, setInternalViewingTenantId] = useState<string | null>(null);
+  const activeViewingTenantId = controlledViewingTenantId !== undefined ? controlledViewingTenantId : internalViewingTenantId;
+  const updateViewingTenantId = (id: string | null) => {
+    if (controlledSetViewingTenantId) {
+      controlledSetViewingTenantId(id);
+    } else {
+      setInternalViewingTenantId(id);
+    }
+  };
   const [showEditDetailsModal, setShowEditDetailsModal] = useState(false);
   const [showEditContractModal, setShowEditContractModal] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -325,9 +339,9 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
 
   // Active viewing tenant calculations
   const viewingTenant = useMemo(() => {
-    if (!viewingTenantId) return null;
-    return tenants.find(t => t.id === viewingTenantId) || null;
-  }, [viewingTenantId, tenants]);
+    if (!activeViewingTenantId) return null;
+    return tenants.find(t => t.id === activeViewingTenantId) || null;
+  }, [activeViewingTenantId, tenants]);
 
   const viewingProperty = useMemo(() => {
     if (!viewingTenant) return null;
@@ -350,10 +364,10 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
         {/* Top Navigation Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#111111] p-5 rounded-3xl border border-white/10 shadow-lg">
           <button
-            onClick={() => setViewingTenantId(null)}
+            onClick={() => onBack ? onBack() : updateViewingTenantId(null)}
             className="px-4 py-2.5 bg-[#181818] hover:bg-white/10 border border-white/10 text-white rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer w-fit"
           >
-            <ArrowLeft className="w-4 h-4 text-blue-400" />
+            <ArrowLeft className="w-4 h-4 text-amber-400" />
             Back to Tenants
           </button>
 
@@ -623,7 +637,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
                 onClick={() => {
                   if (confirm(`Are you sure you want to delete ${viewingTenant.name}'s record? This cannot be undone.`)) {
                     deleteTenant(viewingTenant.id);
-                    setViewingTenantId(null);
+                    updateViewingTenantId(null);
                   }
                 }}
                 className="w-full py-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
@@ -852,7 +866,7 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
             return (
               <motion.div
                 key={t.id}
-                onClick={() => setViewingTenantId(t.id)}
+                onClick={() => updateViewingTenantId(t.id)}
                 className="p-4 rounded-2xl border transition-all duration-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer relative overflow-hidden bg-[#111111] border-white/5 hover:border-white/20 hover:bg-[#181818]"
               >
                 {/* Left details slot */}

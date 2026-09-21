@@ -902,7 +902,8 @@ export const BulkTableModal: React.FC<{
   }, [tenants, isOpen]);
 
   const handleUpdate = (id: string, field: 'currElec' | 'currWater', value: number) => {
-    setReadings(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+    const cleanVal = isNaN(value) ? 0 : value;
+    setReadings(prev => ({ ...prev, [id]: { ...prev[id], [field]: cleanVal } }));
   };
 
   const handleQuickFill = (type: 'zero' | 'add5_elec' | 'add1_water') => {
@@ -919,23 +920,6 @@ export const BulkTableModal: React.FC<{
     setReadings(next);
   };
 
-  const handlePaste = (e: React.ClipboardEvent, field: 'currElec' | 'currWater') => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    const rows = text.split(/\r?\n/).filter(r => r.trim() !== '');
-    
-    if (rows.length === 0) return;
-    
-    const next = { ...readings };
-    tenants.slice(0, rows.length).forEach((t, i) => {
-      const val = parseFloat(rows[i].trim());
-      if (!isNaN(val)) {
-        next[t.id] = { ...next[t.id], [field]: val };
-      }
-    });
-    setReadings(next);
-  };
-
   const handleSubmit = () => {
     const updates = tenants.map(t => ({
       id: t.id,
@@ -943,64 +927,209 @@ export const BulkTableModal: React.FC<{
       currWater: readings[t.id]?.currWater || 0
     }));
     onSave(updates);
+    onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Bulk Reading Table">
-      <div className="space-y-6">
-        <div className="flex flex-wrap gap-2 p-4 bg-white/5 rounded-2xl border border-white/10">
-          <button onClick={() => handleQuickFill('zero')} className="px-3 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-white transition-all">Reset to Previous</button>
-          <button onClick={() => handleQuickFill('add5_elec')} className="px-3 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:bg-blue-500/10 transition-all">+5 Units Elec</button>
-          <button onClick={() => handleQuickFill('add1_water')} className="px-3 py-1.5 bg-slate-900 border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-cyan-400 hover:bg-cyan-500/10 transition-all">+1 Unit Water</button>
+    <Modal isOpen={isOpen} onClose={onClose} title="Bulk Meter Readings">
+      <div className="space-y-5 max-w-5xl mx-auto">
+        {/* Quick actions toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-white/5 rounded-2xl border border-white/10">
+          <div className="flex flex-wrap items-center gap-2">
+            <button 
+              type="button"
+              onClick={() => handleQuickFill('zero')} 
+              className="h-10 px-3.5 bg-slate-900 border border-white/10 rounded-xl text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer"
+            >
+              Reset to Previous
+            </button>
+            <button 
+              type="button"
+              onClick={() => handleQuickFill('add5_elec')} 
+              className="h-10 px-3.5 bg-slate-900 border border-amber-500/20 rounded-xl text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-all cursor-pointer"
+            >
+              +5 All Elec
+            </button>
+            <button 
+              type="button"
+              onClick={() => handleQuickFill('add1_water')} 
+              className="h-10 px-3.5 bg-slate-900 border border-cyan-500/20 rounded-xl text-xs font-bold text-cyan-400 hover:bg-cyan-500/10 transition-all cursor-pointer"
+            >
+              +1 All Water
+            </button>
+          </div>
+          <span className="text-xs font-mono text-neutral-400 bg-black/40 px-3 py-1.5 rounded-xl border border-white/10 font-bold">
+            {tenants.length} Tenants
+          </span>
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-white/10">
-          <table className="w-full text-left border-collapse min-w-[600px]">
-            <thead className="bg-white/10 text-[10px] uppercase font-bold text-slate-400">
-              <tr>
-                <th className="px-6 py-4">Tenant / Room</th>
-                <th className="px-6 py-4">Prev Elec</th>
-                <th className="px-6 py-4">Curr Elec (Paste here)</th>
-                <th className="px-6 py-4">Prev Water</th>
-                <th className="px-6 py-4">Curr Water (Paste here)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5 bg-slate-950/40">
-              {tenants.map(t => (
-                <tr key={t.id} className="hover:bg-white/[0.02]">
-                  <td className="px-6 py-4">
-                    <p className="font-bold text-white text-xs">{t.name}</p>
-                    <p className="text-[10px] text-slate-500 font-mono">RM {t.roomNumber}</p>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-slate-600 text-xs">{t.prevElecReading}</td>
-                  <td className="px-6 py-4">
-                    <input 
-                      type="number" 
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white"
-                      value={readings[t.id]?.currElec || 0}
-                      onChange={e => handleUpdate(t.id, 'currElec', Number(e.target.value))}
-                      onPaste={e => handlePaste(e, 'currElec')}
+        {/* Spacious Two-Column Grid of Standard-Sized Tenant Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[65vh] overflow-y-auto p-1">
+          {tenants.map(t => {
+            const r = readings[t.id] || { currElec: t.currElecReading, currWater: t.currWaterReading };
+            const elecUnits = Math.max(0, r.currElec - t.prevElecReading);
+            const waterUnits = Math.max(0, r.currWater - t.prevWaterReading);
+            const isElecDecreased = r.currElec < t.prevElecReading;
+            const isWaterDecreased = r.currWater < t.prevWaterReading;
+            const contractRent = t.rent || 0;
+
+            return (
+              <div 
+                key={t.id} 
+                className="bg-[#131313] border border-white/10 hover:border-white/20 rounded-3xl p-5 space-y-4 shadow-lg transition-all"
+              >
+                {/* Header: Room, Tenant Name & Contract Rent */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="shrink-0 bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono font-black text-xs sm:text-sm px-3 py-1 rounded-xl">
+                        RM {t.roomNumber}
+                      </span>
+                      <span className="font-bold text-base text-white truncate">
+                        {t.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 text-[11px] font-mono">
+                      <span className={`px-2 py-0.5 rounded-lg border ${
+                        isElecDecreased ? 'text-red-400 bg-red-500/15 border-red-500/30' : 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+                      }`}>
+                        ⚡ +{elecUnits}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-lg border ${
+                        isWaterDecreased ? 'text-red-400 bg-red-500/15 border-red-500/30' : 'text-cyan-300 bg-cyan-500/10 border-cyan-500/20'
+                      }`}>
+                        💧 +{waterUnits}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Contract Rent display */}
+                  <div className="flex items-center justify-between text-xs bg-[#0a0a0a] border border-white/10 px-3 py-1.5 rounded-xl">
+                    <span className="text-neutral-400 font-mono text-[11px] uppercase tracking-wider">Contract Rent:</span>
+                    <span className="text-emerald-400 font-mono font-bold text-xs sm:text-sm">
+                      ₹{contractRent.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Electricity Block */}
+                <div className="bg-[#0c0c0c] border border-white/10 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-amber-400 flex items-center gap-1">⚡ Electricity</span>
+                    <span className="font-mono text-neutral-400 text-[11px]">Prev: <strong className="text-neutral-200">{t.prevElecReading}</strong></span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      step="any"
+                      value={r.currElec}
+                      onChange={e => handleUpdate(t.id, 'currElec', parseFloat(e.target.value))}
+                      aria-label={`Electricity reading for room ${t.roomNumber}`}
+                      className={`w-full h-11 text-center font-mono font-black text-lg rounded-xl px-2 focus:outline-none transition-all ${
+                        isElecDecreased
+                          ? 'bg-red-950/20 border-2 border-red-500 text-red-300'
+                          : 'bg-[#181818] border border-white/15 text-amber-300 focus:border-amber-500'
+                      }`}
                     />
-                  </td>
-                  <td className="px-6 py-4 font-mono text-slate-600 text-xs">{t.prevWaterReading}</td>
-                  <td className="px-6 py-4">
-                    <input 
-                      type="number" 
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white"
-                      value={readings[t.id]?.currWater || 0}
-                      onChange={e => handleUpdate(t.id, 'currWater', Number(e.target.value))}
-                      onPaste={e => handlePaste(e, 'currWater')}
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currElec', r.currElec + 1)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-amber-500/20 text-neutral-200 hover:text-amber-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +1"
+                      >
+                        +1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currElec', r.currElec + 5)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-amber-500/20 text-neutral-200 hover:text-amber-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +5"
+                      >
+                        +5
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currElec', r.currElec + 10)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-amber-500/20 text-neutral-200 hover:text-amber-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +10"
+                      >
+                        +10
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Water Block */}
+                <div className="bg-[#0c0c0c] border border-white/10 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-cyan-400 flex items-center gap-1">💧 Water</span>
+                    <span className="font-mono text-neutral-400 text-[11px]">Prev: <strong className="text-neutral-200">{t.prevWaterReading}</strong></span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      step="any"
+                      value={r.currWater}
+                      onChange={e => handleUpdate(t.id, 'currWater', parseFloat(e.target.value))}
+                      aria-label={`Water reading for room ${t.roomNumber}`}
+                      className={`w-full h-11 text-center font-mono font-black text-lg rounded-xl px-2 focus:outline-none transition-all ${
+                        isWaterDecreased
+                          ? 'bg-red-950/20 border-2 border-red-500 text-red-300'
+                          : 'bg-[#181818] border border-white/15 text-cyan-300 focus:border-cyan-500'
+                      }`}
                     />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currWater', r.currWater + 1)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-cyan-500/20 text-neutral-200 hover:text-cyan-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +1"
+                      >
+                        +1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currWater', r.currWater + 5)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-cyan-500/20 text-neutral-200 hover:text-cyan-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +5"
+                      >
+                        +5
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdate(t.id, 'currWater', r.currWater + 10)}
+                        className="h-11 px-2.5 bg-white/5 hover:bg-cyan-500/20 text-neutral-200 hover:text-cyan-300 border border-white/10 rounded-xl font-mono text-xs font-bold cursor-pointer"
+                        title="Add +10"
+                      >
+                        +10
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        <button onClick={handleSubmit} className="btn-primary w-full py-4 text-sm font-bold uppercase tracking-widest shadow-2xl">
-          Apply All Meter Readings
-        </button>
+        <div className="flex items-center justify-between gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-3 bg-[#181818] hover:bg-white/10 text-neutral-300 font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer border border-white/10"
+          >
+            Cancel
+          </button>
+          <button 
+            type="button"
+            onClick={handleSubmit} 
+            className="flex-1 py-3.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg cursor-pointer"
+          >
+            Apply All Meter Readings
+          </button>
+        </div>
       </div>
     </Modal>
   );
