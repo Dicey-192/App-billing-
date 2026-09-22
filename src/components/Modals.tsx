@@ -9,46 +9,69 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
+  className?: string;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, className }) => {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
-    if (isOpen) window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
+    if (isOpen) {
+      window.addEventListener('keydown', handleEsc);
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      window.removeEventListener('keydown', handleEsc);
+      document.body.style.overflow = '';
+    };
   }, [isOpen, onClose]);
 
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pb-32 sm:pb-36 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain">
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
             onClick={onClose}
-            className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" 
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-md" 
           />
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+            initial={{ opacity: 0, scale: 0.96, y: 15 }} 
             animate={{ opacity: 1, scale: 1, y: 0 }} 
-            exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+            exit={{ opacity: 0, scale: 0.96, y: 15 }} 
+            transition={{ type: "spring", duration: 0.3, bounce: 0 }}
             className={cn(
-              "relative glass-panel rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full overflow-hidden flex flex-col max-h-[calc(100vh-140px)] border border-white/10 my-auto",
-              title.includes("Bulk") || title.includes("Summary") || title.includes("Historical") ? "max-w-5xl" : "max-w-lg"
+              "relative bg-[#111111] border border-white/10 rounded-2xl sm:rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.6)] w-full overflow-hidden flex flex-col max-h-[92dvh] sm:max-h-[88dvh] my-auto",
+              className ? className : (title.includes("Bulk") || title.includes("Summary") || title.includes("Historical") ? "max-w-5xl" : "max-w-lg")
             )}
           >
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5 shrink-0">
-              <h3 className="text-2xl font-bold text-white tracking-tight">{title}</h3>
-              <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-xl text-slate-500 hover:text-white transition-colors">
+            {/* Header: compact, never cramped */}
+            <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.03] shrink-0">
+              <h3 className="text-base sm:text-lg font-bold text-white tracking-tight truncate pr-2">{title}</h3>
+              <button 
+                onClick={onClose} 
+                className="p-1.5 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                aria-label="Close modal"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-8 pb-12 overflow-y-auto custom-scrollbar">
+
+            {/* Scrollable Form / Content Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1 overscroll-contain min-h-0">
               {children}
             </div>
+
+            {/* Sticky/Fixed Footer if passed */}
+            {footer && (
+              <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-t border-white/10 bg-[#141414] shrink-0">
+                {footer}
+              </div>
+            )}
           </motion.div>
         </div>
       )}
@@ -187,10 +210,10 @@ export const PropertyModal: React.FC<{
             />
           </div>
         </div>
-        <div className="pt-6">
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6">
           <button 
             type="submit" 
-            className="btn btn-primary w-full py-4 uppercase font-bold tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)] disabled:opacity-50"
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 cursor-pointer"
           >
             Save Property
           </button>
@@ -274,7 +297,7 @@ export const PropertyRatesModal: React.FC<{
           </div>
         </div>
 
-        <div className="pt-4 flex items-center justify-end gap-3">
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6 flex items-center justify-end gap-3">
           <button 
             type="button" 
             onClick={onClose}
@@ -521,8 +544,13 @@ export const TenantModal: React.FC<{
           </div>
         </div>
 
-        <div className="pt-6">
-          <button type="submit" className="btn btn-primary w-full py-4 uppercase font-bold tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)]">Update Records</button>
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6">
+          <button 
+            type="submit" 
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
+          >
+            {initialData ? "Update Records" : "Save Tenant"}
+          </button>
         </div>
       </form>
     </Modal>
@@ -564,63 +592,63 @@ export const BatchReadingModal: React.FC<{
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 pb-32 sm:pb-36 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain">
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
             onClick={onClose}
-            className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" 
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-md" 
           />
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+            initial={{ opacity: 0, scale: 0.96, y: 15 }} 
             animate={{ opacity: 1, scale: 1, y: 0 }} 
-            exit={{ opacity: 0, scale: 0.95, y: 20 }} 
-            className="relative bg-slate-900 border border-white/10 rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)] w-full max-w-4xl overflow-hidden flex flex-col max-h-[calc(100vh-140px)] my-auto"
+            exit={{ opacity: 0, scale: 0.96, y: 15 }} 
+            className="relative bg-[#111111] border border-white/10 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[92dvh] sm:max-h-[88dvh] my-auto"
           >
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/5 shrink-0">
+            <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.03] shrink-0">
               <div>
-                <h3 className="text-2xl font-bold text-white tracking-tight">Batch Reading Entry</h3>
-                <p className="text-slate-500 text-xs mt-1 uppercase tracking-widest">Update meters for all tenants after rollover</p>
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">Batch Reading Entry</h3>
+                <p className="text-slate-400 text-xs mt-0.5 uppercase tracking-widest font-mono">Update meters for all tenants after rollover</p>
               </div>
-              <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-xl text-slate-500 hover:text-white transition-colors">
+              <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <div className="p-0 overflow-y-auto custom-scrollbar flex-1">
+            <div className="p-0 overflow-y-auto custom-scrollbar flex-1 min-h-0">
               <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 bg-slate-900/95 backdrop-blur-sm z-10">
-                  <tr className="text-[10px] uppercase font-black text-slate-500 border-b border-white/5">
-                    <th className="px-8 py-4">Tenant / Room</th>
-                    <th className="px-8 py-4 text-center">New Elec Reading</th>
-                    <th className="px-8 py-4 text-center">New Water Reading</th>
+                <thead className="sticky top-0 bg-[#111111]/95 backdrop-blur-sm z-10">
+                  <tr className="text-[10px] uppercase font-black text-slate-400 border-b border-white/10">
+                    <th className="px-5 sm:px-8 py-3.5">Tenant / Room</th>
+                    <th className="px-5 sm:px-8 py-3.5 text-center">New Elec Reading</th>
+                    <th className="px-5 sm:px-8 py-3.5 text-center">New Water Reading</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {tenants.map(t => (
                     <tr key={t.id} className="hover:bg-white/[0.02] transition-colors">
-                      <td className="px-8 py-4">
+                      <td className="px-5 sm:px-8 py-3.5">
                         <p className="font-bold text-white text-sm">{t.name}</p>
                         <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Room #{t.roomNumber}</p>
                       </td>
-                      <td className="px-8 py-4">
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="text-[10px] text-slate-600 font-mono">Prev: {t.prevElecReading}</div>
+                      <td className="px-5 sm:px-8 py-3.5">
+                        <div className="flex items-center justify-center gap-2 sm:gap-3">
+                          <div className="text-[10px] text-slate-400 font-mono hidden sm:block">Prev: {t.prevElecReading}</div>
                           <input 
                             type="number" 
-                            className="bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-32 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                            className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-28 sm:w-32 focus:border-amber-500 outline-none transition-all font-mono font-bold"
                             value={readings[t.id]?.currElec || 0}
                             onChange={e => handleUpdate(t.id, 'currElec', Number(e.target.value))}
                           />
                         </div>
                       </td>
-                      <td className="px-8 py-4">
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="text-[10px] text-slate-600 font-mono">Prev: {t.prevWaterReading}</div>
+                      <td className="px-5 sm:px-8 py-3.5">
+                        <div className="flex items-center justify-center gap-2 sm:gap-3">
+                          <div className="text-[10px] text-slate-400 font-mono hidden sm:block">Prev: {t.prevWaterReading}</div>
                           <input 
                             type="number" 
-                            className="bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-32 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                            className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-28 sm:w-32 focus:border-cyan-500 outline-none transition-all font-mono font-bold"
                             value={readings[t.id]?.currWater || 0}
                             onChange={e => handleUpdate(t.id, 'currWater', Number(e.target.value))}
                           />
@@ -632,10 +660,10 @@ export const BatchReadingModal: React.FC<{
               </table>
             </div>
 
-            <div className="p-8 pb-10 border-t border-white/10 bg-white/5 shrink-0">
+            <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-t border-white/10 bg-[#141414] shrink-0">
               <button 
                 onClick={handleSubmit}
-                className="btn btn-primary w-full py-4 uppercase font-bold tracking-[0.2em] shadow-[0_0_20px_rgba(37,99,235,0.3)] cursor-pointer"
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-600/25 cursor-pointer"
               >
                 Apply to All {tenants.length} Tenants
               </button>
@@ -873,13 +901,15 @@ export const PaymentModal: React.FC<{
                </div>
             </div>
 
-            <button 
-              onClick={handleAddPayment}
-              disabled={amount <= 0}
-              className="btn-primary w-full py-4 text-[10px] font-black uppercase tracking-[0.2em] shadow-xl disabled:opacity-50"
-            >
-              Confirm Transaction
-            </button>
+            <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6">
+              <button 
+                onClick={handleAddPayment}
+                disabled={amount <= 0}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Confirm Transaction
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -1114,7 +1144,7 @@ export const BulkTableModal: React.FC<{
           })}
         </div>
 
-        <div className="flex items-center justify-between gap-3 pt-2">
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
@@ -2127,17 +2157,17 @@ export const EditTenantDetailsModal: React.FC<{
           />
         </div>
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold uppercase rounded-xl transition-colors cursor-pointer"
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold uppercase rounded-xl transition-colors cursor-pointer"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase rounded-xl transition-colors shadow-lg cursor-pointer"
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase rounded-xl transition-colors shadow-lg cursor-pointer"
           >
             Save Changes
           </button>
@@ -2259,7 +2289,7 @@ export const EditTenantContractModal: React.FC<{
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Edit Tenant Contract — ${tenant.name}`}>
-      <form onSubmit={handleSubmit} className="space-y-5 max-h-[75vh] overflow-y-auto pr-1">
+      <form onSubmit={handleSubmit} className="space-y-5">
         
         {/* Contract Base Rent */}
         <div className="bg-[#181818] p-4 rounded-2xl border border-white/10 space-y-2">
@@ -2438,7 +2468,7 @@ export const EditTenantContractModal: React.FC<{
         </div>
 
         {/* Actions */}
-        <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 p-4 bg-[#111111]/95 backdrop-blur-md border-t border-white/10 z-10 shrink-0 mt-6 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}

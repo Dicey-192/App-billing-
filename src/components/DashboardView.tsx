@@ -355,100 +355,119 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Elements 3, 4, 5, 6: 4 core KPIs in a neat grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Element 3: Revenue KPI */}
-              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
-                <div className="flex justify-between items-start">
-                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Revenue Collected</p>
-                  <DollarSign className="w-4 h-4 text-orange-500" />
+              <div className="bg-[#181818] p-4 rounded-2xl border border-[#2C2C2E] relative overflow-hidden group">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-medium text-[#A1A1AA]">Revenue Collected</span>
+                  <div className="w-8 h-8 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center shrink-0">
+                    <DollarSign className="w-4 h-4" />
+                  </div>
                 </div>
-                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                <h4 className="text-2xl font-bold text-white tracking-tight mt-2.5">
                   {currencyFormatter(stats.totalRevenue)}
                 </h4>
-                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Direct deposits this period</p>
+                <p className="text-xs text-[#A1A1AA]/80 mt-1">Direct deposits this period</p>
               </div>
 
               {/* Element 4: Outstanding Due KPI */}
-              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-1 h-full bg-red-500" />
-                <div className="flex justify-between items-start">
-                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Outstanding Dues</p>
-                  <Wallet className="w-4 h-4 text-red-500" />
+              <div className="bg-[#181818] p-4 rounded-2xl border border-[#2C2C2E] relative overflow-hidden group">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-medium text-[#A1A1AA]">Outstanding Dues</span>
+                  <div className="w-8 h-8 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 flex items-center justify-center shrink-0">
+                    <Wallet className="w-4 h-4" />
+                  </div>
                 </div>
-                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                <h4 className="text-2xl font-bold text-white tracking-tight mt-2.5">
                   {currencyFormatter(stats.outstandingDue)}
                 </h4>
-                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Active cycle uncollected balance</p>
+                <p className="text-xs text-[#A1A1AA]/80 mt-1">Active cycle uncollected balance</p>
               </div>
 
               {/* Element 5: Occupancy KPI */}
-              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500" />
-                <div className="flex justify-between items-start">
-                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Occupancy Rate</p>
-                  <Home className="w-4 h-4 text-blue-500" />
+              <div className="bg-[#181818] p-4 rounded-2xl border border-[#2C2C2E] relative overflow-hidden group">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-medium text-[#A1A1AA]">Occupancy Rate</span>
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center shrink-0">
+                    <Home className="w-4 h-4" />
+                  </div>
                 </div>
-                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                <h4 className="text-2xl font-bold text-white tracking-tight mt-2.5">
                   {stats.occupancyRate}%
                 </h4>
-                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">{stats.occupiedRooms} / {stats.totalRooms} rooms occupied</p>
+                <p className="text-xs text-[#A1A1AA]/80 mt-1">{stats.occupiedRooms} / {stats.totalRooms} rooms occupied</p>
               </div>
 
               {/* Element 6: Collection Rate KPI */}
-              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-1 h-full bg-green-500" />
-                <div className="flex justify-between items-start">
-                  <p className="text-[10px] font-mono uppercase text-[#A3A3A3] tracking-wider">Collection Rate</p>
-                  <Percent className="w-4 h-4 text-green-500" />
+              <div className="bg-[#181818] p-4 rounded-2xl border border-[#2C2C2E] relative overflow-hidden group">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-medium text-[#A1A1AA]">Collection Rate</span>
+                  <div className="w-8 h-8 rounded-lg bg-green-500/15 border border-green-500/30 text-green-400 flex items-center justify-center shrink-0">
+                    <Percent className="w-4 h-4" />
+                  </div>
                 </div>
-                <h4 className="text-2xl font-black text-white tracking-tight mt-3">
+                <h4 className="text-2xl font-bold text-white tracking-tight mt-2.5">
                   {stats.collectionRate}%
                 </h4>
-                <p className="text-[9px] text-[#A3A3A3] mt-1 uppercase tracking-tight">Accounted transactions cleared</p>
+                <p className="text-xs text-[#A1A1AA]/80 mt-1">Accounted transactions cleared</p>
               </div>
             </div>
 
             {/* Grid for Chart, Activities and Outstanding */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
               {/* Element 7: Revenue Chart */}
-              <div className="lg:col-span-8 bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-6">
-                <div className="flex items-center justify-between">
+              <div className="lg:col-span-8 bg-[#181818] p-6 rounded-2xl border border-[#2C2C2E] space-y-4">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Dynamic Revenue Trends</h4>
-                    <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Aggregated collection totals (Last 6 Billing Cycles)</p>
+                    <h3 className="text-lg font-semibold text-white">Dynamic Revenue Trends</h3>
+                    <p className="text-xs text-[#A1A1AA] mt-0.5">Aggregated collection totals (Last 6 Billing Cycles)</p>
                   </div>
-                  <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_#f97316]" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-[#A1A1AA] flex items-center gap-1">
+                      <span className="inline-block w-2.5 border-t-2 border-dashed border-[#4B5563]" /> Target Baseline
+                    </span>
+                    <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_#f97316]" />
+                  </div>
                 </div>
 
-                <div className="h-48 flex items-end justify-between px-2 pt-4 border-b border-white/5 relative">
+                <div className="h-52 flex items-end justify-between px-2 pt-6 border-b border-[#2C2C2E] relative">
+                  {/* Benchmark Line: Horizontal dotted line (#4B5563) representing target baseline revenue */}
+                  <div className="absolute top-1/2 left-0 right-0 border-t border-dashed border-[#4B5563] z-0 pointer-events-none opacity-80" />
+
                   {chartData.map((d, idx) => {
                     const barHeightPercent = maxChartVal > 0 ? (d.value / maxChartVal) * 100 : 0;
+                    const prevVal = idx > 0 ? chartData[idx - 1].value : d.value;
+                    const growthPercent = prevVal > 0 ? Math.round(((d.value - prevVal) / prevVal) * 100) : 0;
+
                     return (
                       <div key={d.month} className="flex flex-col items-center gap-2 group w-1/6 relative z-10">
-                        {/* Hover values tooltip */}
-                        <div className="absolute -top-10 bg-[#111111] border border-white/10 text-white rounded-lg px-2 py-1 text-[9px] font-bold shadow-2xl scale-0 group-hover:scale-100 transition-all origin-bottom duration-150 pointer-events-none z-30">
-                          {currencyFormatter(d.value)}
+                        {/* Interactive Tap/Hover Tooltip with currency amounts & percentage growth */}
+                        <div className="absolute -top-12 bg-[#111111] border border-[#2C2C2E] text-white rounded-lg px-2.5 py-1.5 text-[10px] font-medium shadow-2xl scale-0 group-hover:scale-100 group-active:scale-100 transition-all origin-bottom duration-150 pointer-events-none z-30 whitespace-nowrap">
+                          <div className="font-bold text-white">{currencyFormatter(d.value)}</div>
+                          <div className={`text-[9px] ${growthPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {idx === 0 ? 'Baseline' : `${growthPercent >= 0 ? '+' : ''}${growthPercent}% vs prev`}
+                          </div>
                         </div>
 
                         {/* Bar */}
-                        <div className="w-8 sm:w-12 bg-white/[0.02] rounded-t-lg h-36 flex items-end">
+                        <div className="w-8 sm:w-12 bg-white/[0.03] rounded-t-lg h-36 flex items-end">
                           <motion.div
                             initial={{ height: 0 }}
                             animate={{ height: `${barHeightPercent}%` }}
                             transition={{ duration: 0.6, ease: "easeOut", delay: idx * 0.05 }}
-                            className="w-full bg-gradient-to-t from-orange-600 to-orange-400 rounded-t-lg shadow-[0_0_8px_rgba(249,115,22,0.2)] group-hover:brightness-110 transition-all"
+                            className="w-full bg-gradient-to-t from-orange-600 to-orange-400 rounded-t-lg shadow-[0_0_8px_rgba(249,115,22,0.2)] group-hover:brightness-110 transition-all cursor-pointer"
                           />
                         </div>
 
-                        <span className="text-[9px] font-mono text-[#A3A3A3] uppercase tracking-wider">{d.label}</span>
+                        {/* Month Label: 12px Medium with 80% opacity */}
+                        <span className="text-xs font-medium text-[#A1A1AA]/80 uppercase tracking-wider">{d.label}</span>
                       </div>
                     );
                   })}
 
-                  {/* Grid Lines */}
-                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-[0.03] py-2">
+                  {/* Faint Background Grid Lines */}
+                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-[0.05] py-2">
                     <div className="border-b border-white w-full" />
                     <div className="border-b border-white w-full" />
                     <div className="border-b border-white w-full" />
@@ -457,78 +476,91 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* Element 8: Quick Actions Sidebar inside dashboard */}
-              <div className="lg:col-span-4 bg-[#181818] p-6 rounded-3xl border border-white/5 flex flex-col justify-between space-y-6">
+              <div className="lg:col-span-4 bg-[#181818] p-6 rounded-2xl border border-[#2C2C2E] flex flex-col justify-between space-y-5">
                 <div>
-                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Quick Actions</h4>
-                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Fast-track core business processes</p>
+                  <h3 className="text-lg font-semibold text-white mb-1">Quick Actions</h3>
+                  <p className="text-xs text-[#A1A1AA]">Fast-track core business processes</p>
                 </div>
 
-                <div className="space-y-3 flex-1 flex flex-col justify-center">
+                {/* 2x2 Grid of 40px Height Action Buttons */}
+                <div className="grid grid-cols-2 gap-2.5 flex-1 flex flex-col justify-center">
                   <button
                     onClick={() => setView('tenants')}
-                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                    className="h-10 px-3 bg-[#111111] hover:bg-white/[0.06] border border-[#2C2C2E] hover:border-white/20 rounded-xl flex items-center justify-between text-left group transition-all duration-150 cursor-pointer text-xs"
                   >
-                    <span className="text-white font-bold flex items-center gap-2.5">
-                      <Users className="w-4 h-4 text-[#A3A3A3]" />
-                      Manage Tenants
+                    <span className="text-white font-semibold flex items-center gap-1.5 truncate">
+                      <Users className="w-3.5 h-3.5 text-[#A1A1AA] shrink-0" />
+                      <span className="truncate">Tenants</span>
                     </span>
-                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#A1A1AA] group-hover:translate-x-0.5 transition-transform shrink-0" />
                   </button>
 
                   <button
                     onClick={() => setView('payments')}
-                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                    className="h-10 px-3 bg-[#111111] hover:bg-white/[0.06] border border-[#2C2C2E] hover:border-white/20 rounded-xl flex items-center justify-between text-left group transition-all duration-150 cursor-pointer text-xs"
                   >
-                    <span className="text-white font-bold flex items-center gap-2.5">
-                      <DollarSign className="w-4 h-4 text-[#A3A3A3]" />
-                      Collect Rents & Bills
+                    <span className="text-white font-semibold flex items-center gap-1.5 truncate">
+                      <DollarSign className="w-3.5 h-3.5 text-[#A1A1AA] shrink-0" />
+                      <span className="truncate">Collect</span>
                     </span>
-                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#A1A1AA] group-hover:translate-x-0.5 transition-transform shrink-0" />
+                  </button>
+
+                  <button
+                    onClick={() => setView('readings')}
+                    className="h-10 px-3 bg-[#111111] hover:bg-white/[0.06] border border-[#2C2C2E] hover:border-white/20 rounded-xl flex items-center justify-between text-left group transition-all duration-150 cursor-pointer text-xs"
+                  >
+                    <span className="text-white font-semibold flex items-center gap-1.5 truncate">
+                      <Zap className="w-3.5 h-3.5 text-[#A1A1AA] shrink-0" />
+                      <span className="truncate">Meters</span>
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#A1A1AA] group-hover:translate-x-0.5 transition-transform shrink-0" />
                   </button>
 
                   <button
                     onClick={() => setView('settings')}
-                    className="w-full p-3.5 bg-[#111111] border border-white/5 hover:border-white/15 rounded-xl flex items-center justify-between text-left group transition-all duration-200 cursor-pointer text-xs"
+                    className="h-10 px-3 bg-[#111111] hover:bg-white/[0.06] border border-[#2C2C2E] hover:border-white/20 rounded-xl flex items-center justify-between text-left group transition-all duration-150 cursor-pointer text-xs"
                   >
-                    <span className="text-white font-bold flex items-center gap-2.5">
-                      <Settings className="w-4 h-4 text-[#A3A3A3]" />
-                      System Preferences
+                    <span className="text-white font-semibold flex items-center gap-1.5 truncate">
+                      <Settings className="w-3.5 h-3.5 text-[#A1A1AA] shrink-0" />
+                      <span className="truncate">Settings</span>
                     </span>
-                    <ChevronRight className="w-4 h-4 text-[#A3A3A3] group-hover:translate-x-0.5 transition-transform" />
+                    <ChevronRight className="w-3.5 h-3.5 text-[#A1A1AA] group-hover:translate-x-0.5 transition-transform shrink-0" />
                   </button>
                 </div>
 
+                {/* Primary Call-to-Action (CTA): Solid brand fill #2563EB and bold white text */}
                 <button
                   onClick={onOpenQuickActions}
-                  className="w-full py-2.5 bg-white hover:bg-neutral-100 text-[#050505] font-sans font-black text-[10px] tracking-widest uppercase rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full h-11 bg-[#2563EB] hover:bg-blue-600 text-white font-bold text-xs tracking-wider uppercase rounded-xl transition-all shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                 >
-                  <Zap className="w-3.5 h-3.5" />
-                  LAUNCH COMMAND CENTER
+                  <Zap className="w-4 h-4" />
+                  Launch Command Center
                 </button>
               </div>
             </div>
 
             {/* Row with Recent Activity and Top Outstanding Tenants */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
               {/* Element 9: Recent Activity Timeline */}
-              <div className="bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-4">
-                <div>
-                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">Recent Activity Timeline</h4>
-                  <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Live database events and receipts logged</p>
+              <div className="bg-[#181818] p-6 rounded-2xl border border-[#2C2C2E] space-y-4">
+                <div className="mb-4">
+                  <h3 className="text-lg font-semibold text-white">Recent Activity Timeline</h3>
+                  <p className="text-xs text-[#A1A1AA] mt-0.5">Live database events and receipts logged</p>
                 </div>
 
-                <div className="space-y-4 pt-2">
+                <div className="space-y-4 pt-1">
                   {recentActivities.map((act) => (
                     <div key={act.id} className="flex gap-4 text-left">
                       <div className="flex flex-col items-center">
-                        <div className={`w-2 h-2 rounded-full ${act.color} ring-4 ring-white/5`} />
-                        <div className="w-0.5 h-10 bg-white/5" />
+                        <div className={`w-2.5 h-2.5 rounded-full ${act.color} ring-4 ring-white/5`} />
+                        <div className="w-0.5 h-10 bg-white/10" />
                       </div>
                       <div className="space-y-0.5 pb-2">
-                        <span className="text-[10px] font-mono text-[#A3A3A3] uppercase">{act.date}</span>
+                        <span className="text-xs font-mono text-[#A1A1AA] uppercase">{act.date}</span>
                         <h5 className="text-xs font-bold text-white leading-normal">{act.title}</h5>
-                        <p className="text-[11px] text-[#A3A3A3] leading-relaxed">{act.desc}</p>
+                        <p className="text-xs text-[#A1A1AA] leading-relaxed">{act.desc}</p>
                       </div>
                     </div>
                   ))}
@@ -536,40 +568,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               {/* Element 10: Top Outstanding Tenants */}
-              <div className="bg-[#181818] p-6 rounded-3xl border border-white/5 space-y-4">
-                <div className="flex items-center justify-between">
+              <div className="bg-[#181818] p-6 rounded-2xl border border-[#2C2C2E] space-y-4">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Top Outstanding Tenants</h4>
-                    <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wider">Highest active balances requiring attention</p>
+                    <h3 className="text-lg font-semibold text-white">Top Outstanding Tenants</h3>
+                    <p className="text-xs text-[#A1A1AA] mt-0.5">Highest active balances requiring attention</p>
                   </div>
-                  <span className="text-[9px] font-mono text-red-500 uppercase tracking-widest bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-lg">
+                  <span className="text-[10px] font-mono text-red-400 font-bold uppercase tracking-wider bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-lg">
                     ATTENTION REQUIRED
                   </span>
                 </div>
 
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3 pt-1">
                   {topOutstandingTenants.length === 0 ? (
-                    <div className="text-center py-8 border border-dashed border-white/5 rounded-2xl">
-                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto opacity-40 mb-2" />
-                      <p className="text-xs text-[#A3A3A3] font-bold">All balances settled</p>
-                      <p className="text-[10px] text-[#A3A3A3]/70 mt-1 uppercase tracking-tight">No tenants have active arrears right now.</p>
+                    <div className="text-center py-8 border border-dashed border-[#2C2C2E] rounded-2xl">
+                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto opacity-50 mb-2" />
+                      <p className="text-xs text-white font-bold">All balances settled</p>
+                      <p className="text-xs text-[#A1A1AA] mt-1">No tenants have active arrears right now.</p>
                     </div>
                   ) : (
                     topOutstandingTenants.map((t) => (
                       <div 
                         key={t.id} 
                         onClick={() => setView('tenants')}
-                        className="p-3 bg-[#111111] hover:bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between transition-all cursor-pointer group text-left"
+                        className="p-3 bg-[#111111] hover:bg-white/[0.04] border border-[#2C2C2E] rounded-xl flex items-center justify-between transition-all cursor-pointer group text-left"
                       >
                         <div>
                           <h5 className="text-xs font-bold text-white group-hover:text-red-400 transition-colors">{t.name}</h5>
-                          <p className="text-[10px] text-[#A3A3A3] mt-0.5">Room {t.room} • {t.propertyName}</p>
+                          <p className="text-xs text-[#A1A1AA] mt-0.5">Room {t.room} • {t.propertyName}</p>
                         </div>
                         <div className="text-right">
-                          <span className="text-xs font-black text-red-500 font-mono">
+                          <span className="text-xs font-bold text-red-500 font-mono">
                             {currencyFormatter(t.outstanding)}
                           </span>
-                          <p className="text-[8px] uppercase tracking-wider text-[#A3A3A3] mt-0.5">Remind now</p>
+                          <p className="text-[10px] text-[#A1A1AA] mt-0.5">Remind now</p>
                         </div>
                       </div>
                     ))

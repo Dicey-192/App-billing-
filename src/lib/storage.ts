@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AppData, Property, Tenant, BillHistoryEntry, SubscriptionPlan } from '../types';
+import { AppData, Property, Tenant, BillHistoryEntry, HistoryTenantSnapshot, SubscriptionPlan } from '../types';
 import { db } from './db';
 
 const STORAGE_KEY = 'rentflo_billing_data';
@@ -17,6 +17,122 @@ const INITIAL_DATA: AppData = {
   subscriptionPlan: INITIAL_PLAN,
   calendarSystem: 'AD',
 };
+
+export function normalizeAndValidateBackup(raw: any): AppData {
+  let target = raw;
+  if (typeof target === 'string') {
+    try {
+      target = JSON.parse(target);
+    } catch {
+      try {
+        const decoded = decodeURIComponent(escape(atob(target)));
+        target = JSON.parse(decoded);
+      } catch {
+        throw new Error("Could not parse backup JSON string: invalid format");
+      }
+    }
+  }
+
+  // Recursively unroll envelopes
+  for (let i = 0; i < 5; i++) {
+    if (!target || typeof target !== 'object') break;
+    
+    if (typeof target.payload === 'string') {
+      try { target.payload = JSON.parse(target.payload); } catch {}
+    }
+    if (typeof target.data === 'string') {
+      try { target.data = JSON.parse(target.data); } catch {}
+    }
+
+    if (target.payload && typeof target.payload === 'object') {
+      target = target.payload;
+    } else if (target.data && typeof target.data === 'object') {
+      if (target.data.rentflo_billing_data) {
+        let inner = target.data.rentflo_billing_data;
+        if (typeof inner === 'string') {
+          try { inner = JSON.parse(inner); } catch {}
+        }
+        target = inner;
+      } else if (target.data.artha_billing_data) {
+        let inner = target.data.artha_billing_data;
+        if (typeof inner === 'string') {
+          try { inner = JSON.parse(inner); } catch {}
+        }
+        target = inner;
+      } else if (Array.isArray(target.data.properties) || Array.isArray(target.data.tenants)) {
+        target = target.data;
+      } else {
+        target = target.data;
+      }
+    } else if (target.rentflo_billing_data) {
+      let inner = target.rentflo_billing_data;
+      if (typeof inner === 'string') {
+        try { inner = JSON.parse(inner); } catch {}
+      }
+      target = inner;
+    } else if (target._nexum_db_rentflo_billing_data) {
+      let inner = target._nexum_db_rentflo_billing_data;
+      if (typeof inner === 'string') {
+        try { inner = JSON.parse(inner); } catch {}
+      }
+      target = inner;
+    } else {
+      break;
+    }
+  }
+
+  if (!target || typeof target !== 'object') {
+    throw new Error("Invalid backup format: contents are not an object");
+  }
+
+  const properties = Array.isArray(target.properties) ? target.properties : [];
+  const tenants = Array.isArray(target.tenants) ? target.tenants : [];
+  const history = Array.isArray(target.history) ? target.history : [];
+
+  return {
+    ...target,
+    properties,
+    tenants,
+    history,
+    calendarSystem: target.calendarSystem === 'BS' ? 'BS' : 'AD',
+    activeMonth: target.activeMonth || '',
+    subscriptionPlan: INITIAL_PLAN,
+    auditLogs: Array.isArray(target.auditLogs) ? target.auditLogs : []
+  };
+}
+
+export function persistDataSynchronously(appData: AppData) {
+  try {
+    const envelope = {
+      _timestamp: Date.now(),
+      payload: appData
+    };
+    const stringified = JSON.stringify(envelope);
+    localStorage.setItem('_nexum_db_' + STORAGE_KEY, stringified);
+    localStorage.setItem('_nexum_db_rentflo_billing_data', stringified);
+    localStorage.setItem('_nexum_db_artha_billing_data', stringified);
+    
+    // Also save to EMERGENCY_BACKUP
+    const backupEnvelope = {
+      _timestamp: Date.now(),
+      data: {
+        rentflo_billing_data: stringified,
+        artha_billing_data: stringified
+      }
+    };
+    localStorage.setItem('EMERGENCY_BACKUP', JSON.stringify(backupEnvelope));
+  } catch (err) {
+    console.error('[useStorage] Synchronous localStorage write failed:', err);
+  }
+
+  try {
+    fetch('/api/local-storage/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: appData })
+    }).catch(() => {});
+  } catch {}
+}
 
 export function performRecalculation(prev: AppData): AppData {
   if (!prev) return INITIAL_DATA;
@@ -197,9 +313,30 @@ export function useStorage() {
   const [quotaUsage, setQuotaUsage] = useState(0);
   const [dataStats, setDataStats] = useState({ properties: 0, tenants: 0, history: 0 });
 
-  // No loading sequence needed as state is loaded synchronously on initiation!
+  // On mount: fetch disk-backed storage from /api/local-storage/load if available
   useEffect(() => {
     setIsLoading(false);
+    fetch('/api/local-storage/load')
+      .then(res => res.json())
+      .then(payload => {
+        if (payload?.success && payload?.data) {
+          const diskData = normalizeAndValidateBackup(payload.data);
+          setData(current => {
+            const currentCount = (current.properties?.length || 0) + (current.tenants?.length || 0) + (current.history?.length || 0);
+            const diskCount = (diskData.properties?.length || 0) + (diskData.tenants?.length || 0) + (diskData.history?.length || 0);
+            if (diskCount > currentCount || current.properties.length === 0) {
+              console.log('[useStorage] Hydrating richer persistent data from local private disk storage:', diskCount, 'vs', currentCount);
+              const recalculated = performRecalculation(diskData);
+              persistDataSynchronously(recalculated);
+              return recalculated;
+            }
+            return current;
+          });
+        }
+      })
+      .catch(err => {
+        console.warn('[useStorage] Initial local folder load fallback:', err);
+      });
   }, []);
 
   // Save data to BackendDB & Local App Folder when changes occur
@@ -426,48 +563,119 @@ export function useStorage() {
     });
   }, []);
 
-  const restoreData = useCallback(async (newData: AppData) => {
-    const next = {
-      ...newData,
-      lastBackupAt: Date.now(),
-      subscriptionPlan: INITIAL_PLAN
-    };
-    const recalculated = performRecalculation(next);
-    
-    // Direct synchronous local storage writes for bulletproof persistence!
+  const confirmAndGenerateBill = useCallback((
+    tenantId: string,
+    period: string,
+    finalElec: number,
+    finalWater: number,
+    calculations: {
+      baseRent: number;
+      electricityCharges: number;
+      waterCharges: number;
+      otherFees: number;
+      openingBalance: number;
+      totalDue: number;
+    }
+  ) => {
+    let savedResult: { tenant: Tenant; historyEntry: BillHistoryEntry } | null = null;
+
+    setData(prev => {
+      const currentTenant = prev.tenants.find(t => t.id === tenantId);
+      if (!currentTenant) return prev;
+
+      const prop = prev.properties.find(p => p.id === currentTenant.propertyId);
+
+      const updatedTenant: Tenant = {
+        ...currentTenant,
+        currElecReading: finalElec,
+        currWaterReading: finalWater,
+        previousDues: calculations.openingBalance,
+        isPaid: false,
+        paidAmount: 0,
+        manualOverrides: {
+          baseRent: calculations.baseRent,
+          electricityCharges: calculations.electricityCharges,
+          waterCharges: calculations.waterCharges,
+          otherFees: calculations.otherFees,
+          openingBalance: calculations.openingBalance,
+          totalDue: calculations.totalDue,
+          paidAmount: 0,
+          isPaid: false
+        },
+        updatedAt: Date.now()
+      };
+
+      const snapshotTenant: HistoryTenantSnapshot = {
+        ...updatedTenant
+      };
+
+      const historyEntry: BillHistoryEntry = {
+        id: `bill_${tenantId}_${period}_${Date.now()}`,
+        propertyId: updatedTenant.propertyId,
+        month: period,
+        snapshot: {
+          property: prop || {
+            id: updatedTenant.propertyId,
+            name: 'Property',
+            address: '',
+            electricRate: 0,
+            waterRate: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            defaultExpenses: []
+          },
+          tenants: [snapshotTenant]
+        },
+        createdAt: Date.now()
+      };
+
+      savedResult = { tenant: updatedTenant, historyEntry };
+
+      // Prepend the new bill, replacing any prior bill for this tenant & month
+      const filteredHistory = prev.history.filter(h => {
+        if (h.month !== period) return true;
+        if (h.id.includes(tenantId)) return false;
+        if (Array.isArray(h.snapshot?.tenants) && h.snapshot.tenants.some(st => st.id === tenantId)) return false;
+        return true;
+      });
+
+      const next: AppData = {
+        ...prev,
+        tenants: prev.tenants.map(t => t.id === tenantId ? updatedTenant : t),
+        history: [historyEntry, ...filteredHistory]
+      };
+
+      const recalculated = performRecalculation(next);
+      persistDataSynchronously(recalculated);
+      return recalculated;
+    });
+
+    return savedResult;
+  }, []);
+
+  const restoreData = useCallback(async (newData: any) => {
     try {
-      const envelope = {
-        _timestamp: Date.now(),
-        payload: recalculated
+      const normalized = normalizeAndValidateBackup(newData);
+      const next = {
+        ...normalized,
+        lastBackupAt: Date.now(),
+        subscriptionPlan: INITIAL_PLAN
       };
-      const stringified = JSON.stringify(envelope);
-      localStorage.setItem('_nexum_db_rentflo_billing_data', stringified);
-      localStorage.setItem('_nexum_db_artha_billing_data', stringified);
-      
-      // Also write directly to EMERGENCY_BACKUP
-      const backupData = {
-        rentflo_billing_data: stringified,
-        artha_billing_data: stringified
-      };
-      const backupEnvelope = {
-        _timestamp: Date.now(),
-        data: backupData
-      };
-      localStorage.setItem('EMERGENCY_BACKUP', JSON.stringify(backupEnvelope));
-      console.log('[useStorage] Bulletproof restore data saved synchronously to localStorage and EMERGENCY_BACKUP!');
+      const recalculated = performRecalculation(next);
+      persistDataSynchronously(recalculated);
+
+      try {
+        await db.set(STORAGE_KEY, recalculated);
+      } catch (e) {
+        console.error('[useStorage] Immediate restore save failed:', e);
+      }
+
+      setData(recalculated);
+      return true;
     } catch (err) {
-      console.error('[useStorage] Synchronous localStorage write failed:', err);
+      console.error('[useStorage] restoreData failed:', err);
+      return false;
     }
-
-    try {
-      // Save to database immediately to guarantee persistence before any UI blocking/refresh occurs!
-      await db.set(STORAGE_KEY, recalculated);
-    } catch (e) {
-      console.error('[useStorage] Immediate restore save failed:', e);
-    }
-
-    setData(recalculated);
-    return true;
   }, []);
 
   const setSubscriptionPlan = useCallback((plan: SubscriptionPlan) => {
@@ -516,7 +724,8 @@ export function useStorage() {
     toggleSupportMasterMode,
     clearAuditLogs,
     setData,
+    confirmAndGenerateBill,
     setSubscriptionPlan,
     setCalendarSystem,
-  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan, setCalendarSystem]);
+  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, confirmAndGenerateBill, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan, setCalendarSystem]);
 }

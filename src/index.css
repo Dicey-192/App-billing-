@@ -145,8 +145,22 @@
 
   /* Fields inputs themed as frosted input backdrops */
   .input {
-    @apply w-full px-5 py-3.5 bg-white/[0.03] border rounded-full text-white placeholder:text-neutral-500 transition-all font-medium text-xs tracking-wide backdrop-blur-md;
-    border-color: rgba(255, 255, 255, 0.05);
+    @apply w-full px-4 py-3 bg-white/[0.03] border rounded-xl text-white placeholder:text-neutral-500 transition-all font-medium tracking-wide backdrop-blur-md;
+    border-color: rgba(255, 255, 255, 0.08);
+    font-size: 16px; /* Prevents unwanted auto-zoom on mobile iOS Safari when focused */
+    scroll-margin-top: 70px;
+    scroll-margin-bottom: 120px;
+  }
+
+  @media (min-width: 640px) {
+    .input {
+      font-size: 0.875rem; /* 14px on desktop/tablets */
+    }
+  }
+
+  input, textarea, select {
+    scroll-margin-top: 70px;
+    scroll-margin-bottom: 120px;
   }
 
   .input:focus {

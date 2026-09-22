@@ -366,7 +366,7 @@ export default function App() {
     hasModal: false,
   });
 
-  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading, calendarSystem, setCalendarSystem } = useStorage();
+  const { data, properties, tenants, history, auditLogs, supportMasterOverrideMode, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, restoreData, quotaUsage, dataStats, setData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, isLoading, calendarSystem, setCalendarSystem, confirmAndGenerateBill } = useStorage();
 
   // Authentication role states
   const [currentUser, setCurrentUser] = useState<{ email: string; role: 'owner' | 'manager' | 'accountant' | 'readonly' } | null>(() => {
@@ -2032,71 +2032,48 @@ export default function App() {
       <Sidebar currentView={currentView} setView={setView} onFabClick={handleFabClick} />
       
       <main className="flex-1 flex flex-col p-4 md:p-8 pb-40 md:pb-40 max-w-7xl mx-auto w-full z-10">
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-white/5">
-          <div className="flex items-center gap-4">
-            <div className="w-1.5 h-8 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#8A8D98] font-mono leading-none">RENTFLO ADMINISTRATIVE COMMAND</p>
-              <h1 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider mt-1.5 flex items-center gap-3 font-sans">
-                {currentView === 'dashboard' ? 'Dynamic Analytics' : currentView === 'tenants' ? 'Tenants Ledger' : currentView === 'payments' ? 'Payments Ledger' : 'Preferences & Setup'}
-                <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
-              </h1>
-            </div>
+        {/* Unified Application Bar: Fixed 56px height, 1px bottom border (#2C2C2E) */}
+        <header className="h-14 w-full flex items-center justify-between px-2 sm:px-4 mb-6 border-b border-[#2C2C2E] shrink-0">
+          {/* Left: App Title ("Rentflo" or Screen Title) in 20px Bold white text */}
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-white tracking-tight font-sans">
+              {currentView === 'dashboard' ? 'Rentflo' : currentView === 'tenants' ? 'Tenants Ledger' : currentView === 'payments' ? 'Payments Ledger' : 'Preferences & Setup'}
+            </h1>
           </div>
           
-          <div className="flex flex-wrap items-center gap-4">
-             {/* System Override console marker */}
-             <div className="flex items-center gap-2.5 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-xl text-[9px] shrink-0">
-               <span className="text-[9px] uppercase tracking-widest font-bold text-[#8A8D98] font-mono">SUPPORT OVERRIDE</span>
-               <button
-                 type="button"
-                 onClick={toggleSupportMasterMode}
-                 className={cn(
-                   "relative w-9 h-4.5 flex items-center rounded-full p-0.5 transition-colors duration-200 cursor-pointer",
-                   supportMasterOverrideMode ? "bg-white" : "bg-zinc-800"
-                 )}
-               >
-                 <div
-                   className={cn(
-                     "bg-[#070A13] w-3.5 h-3.5 rounded-full shadow-md transform transition-transform duration-150",
-                     supportMasterOverrideMode ? "translate-x-4" : "translate-x-0"
-                   )}
-                 />
-               </button>
-             </div>
-
+          {/* Right: Actions with Undo/Redo and Single Notification Bell icon (24x24px touch target with red alert badge) */}
+          <div className="flex items-center gap-3">
              {/* Dynamic Undo/Redo Engine */}
-             <div className="flex gap-1 bg-white/[0.01] border border-white/5 p-1 rounded-xl">
+             <div className="flex items-center gap-0.5 bg-[#181818] border border-[#2C2C2E] p-0.5 rounded-lg">
                <button 
                 onClick={handleUndo} 
                 disabled={undoStack.length === 0}
-                className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-white"
+                className="p-1 hover:bg-white/10 rounded-md disabled:opacity-20 transition-all text-[#A1A1AA] hover:text-white"
                 title="Undo (Ctrl+Z)"
                >
-                 <Undo2 className="w-4 h-4" />
+                 <Undo2 className="w-3.5 h-3.5" />
                </button>
                <button 
                 onClick={handleRedo} 
                 disabled={redoStack.length === 0}
-                className="p-1.5 hover:bg-white/10 rounded-lg disabled:opacity-10 transition-all text-slate-400 hover:text-white"
+                className="p-1 hover:bg-white/10 rounded-md disabled:opacity-20 transition-all text-[#A1A1AA] hover:text-white"
                 title="Redo (Ctrl+Shift+Z)"
                >
-                 <Redo2 className="w-4 h-4" />
+                 <Redo2 className="w-3.5 h-3.5" />
                </button>
              </div>
 
-             {/* 3.3 — Smart Diagnostic Notification Alerts Bell Popover */}
+             {/* Single Notification Bell (24x24px touch target with red alert badge) aligned to far right */}
              <div className="relative shrink-0">
                <button 
                  onClick={() => setShowAlertsDropdown(prev => !prev)}
-                 className="relative p-2.5 bg-white/[0.02] hover:bg-white/[0.06] border border-white/5 rounded-xl text-slate-400 hover:text-[#76FF03] transition-all cursor-pointer"
-                 title="Smart Diagnostic Alerts"
+                 className="relative w-6 h-6 flex items-center justify-center text-[#A1A1AA] hover:text-white transition-colors cursor-pointer"
+                 title="Notification Alerts"
+                 aria-label="Notification Alerts"
                >
-                 <Bell className="w-4 h-4" />
+                 <Bell className="w-5 h-5" />
                  {smartAlerts.length > 0 && (
-                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-slate-950 rounded-full text-[9px] font-black flex items-center justify-center animate-pulse">
-                     {smartAlerts.length}
-                   </span>
+                   <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-[#0A0A0C] animate-pulse" />
                  )}
                </button>
                
@@ -2108,24 +2085,24 @@ export default function App() {
                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
                        animate={{ opacity: 1, scale: 1, y: 0 }}
                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                       className="absolute right-0 mt-3 w-80 bg-[#121316] border border-white/10 rounded-2xl shadow-2xl p-4 space-y-3 z-50 cursor-default"
+                       className="absolute right-0 mt-3 w-80 bg-[#161618] border border-[#2C2C2E] rounded-2xl shadow-2xl p-4 space-y-3 z-50 cursor-default"
                      >
-                       <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Smart Alerts</span>
-                         <span className="text-[9px] font-mono text-[#76FF03]">{smartAlerts.length} active</span>
+                       <div className="flex items-center justify-between border-b border-[#2C2C2E] pb-2">
+                         <span className="text-xs font-semibold uppercase tracking-wider text-[#A1A1AA]">Notifications</span>
+                         <span className="text-[10px] font-mono text-emerald-400">{smartAlerts.length} active</span>
                        </div>
                        <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                          {smartAlerts.length === 0 ? (
-                           <p className="text-[11px] text-slate-500 italic text-center py-2">No active warnings. Code compliant.</p>
+                           <p className="text-xs text-[#A1A1AA] italic text-center py-2">No unread notifications.</p>
                          ) : (
                            smartAlerts.map(alert => (
-                             <div key={alert.id} className="p-2.5 rounded-xl border border-white/5 flex items-start gap-2 bg-slate-950/40 text-left">
+                             <div key={alert.id} className="p-2.5 rounded-xl border border-[#2C2C2E] flex items-start gap-2 bg-[#111113] text-left">
                                {alert.type === 'warning' ? (
                                  <ShieldAlert className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
                                ) : (
                                  <AlertCircle className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />
                                )}
-                               <span className="text-[10px] text-slate-300 font-medium leading-relaxed">{alert.text}</span>
+                               <span className="text-xs text-[#E4E4E7] font-medium leading-relaxed">{alert.text}</span>
                              </div>
                            ))
                          )}
@@ -2134,76 +2111,9 @@ export default function App() {
                    </>
                  )}
                </AnimatePresence>
-              </div>
-
-              {/* Local Private Storage Status Badge */}
-              <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-emerald-400 font-mono text-[10px] font-bold shrink-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>100% LOCAL STORAGE (.rentflo_data/)</span>
-              </div>
-
-              {/* User profile with admin display chip */}
-              {currentUser && (
-                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/10 pl-3 pr-3 py-1.5 rounded-xl text-left font-sans select-none shrink-0">
-                  <div className="flex flex-col text-right">
-                    <span className="text-[10px] font-bold text-white leading-none truncate max-w-[110px]">{currentUser.email.split('@')[0]}</span>
-                    <span className="text-[8px] font-mono uppercase text-slate-400 tracking-widest mt-0.5">{currentUser.role}</span>
-                  </div>
-                </div>
-              )}
-
-             {/* Action triggers dynamically depending on active context */}
-             {currentView === 'tenants' && (
-                <div className="flex flex-wrap gap-2">
-                  <button 
-                    onClick={() => setView('bulk-readings')}
-                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-white border border-white/20 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md hover:scale-[1.02] cursor-pointer flex items-center gap-2"
-                    title="Full-page bulk meter reading entry table"
-                  >
-                    <Clipboard className="w-4 h-4" />
-                    BULK METER READINGS
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (properties.length === 0) {
-                        alert('Please create a property first');
-                        return;
-                      }
-                      setTenantModal({ open: true, propertyId: selectedPropertyId === 'all' ? properties[0].id : selectedPropertyId });
-                    }}
-                    className="px-4 py-2.5 bg-white hover:bg-neutral-100 text-slate-950 font-sans font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg hover:scale-[1.02] cursor-pointer flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    ADD TENANT DEPOSIT
-                  </button>
-                </div>
-              )}
+             </div>
           </div>
         </header>
-
-        {supportMasterOverrideMode && (
-          <div className="w-full bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-amber-400">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 flex-shrink-0 animate-pulse text-amber-500" />
-              <div>
-                <h4 className="text-sm font-bold">Support Override Console Active</h4>
-                <p className="text-[10px] text-amber-500/70 mt-0.5 uppercase tracking-wide">You can manually alter any past/present bill fields or arrears downstream.</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  recalculateBalances();
-                  alert('Forced Sync Success: All historical arrears recalculations solved and downstream payments balanced!');
-                }}
-                className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold uppercase tracking-widest text-[9px] rounded-xl hover:bg-amber-400 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <ArrowDownUp className="w-3 h-3" />
-                Sync Late Payments Now
-              </button>
-            </div>
-          </div>
-        )}
 
         <AnimatePresence mode="wait">
           <motion.div
@@ -2294,6 +2204,7 @@ export default function App() {
                 addHistory={addHistory}
                 history={history}
                 downloadReceipt={downloadReceipt}
+                confirmAndGenerateBill={confirmAndGenerateBill}
               />
             )}
             {currentView === 'payments' && (

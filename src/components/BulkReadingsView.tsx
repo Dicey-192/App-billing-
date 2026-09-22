@@ -45,6 +45,20 @@ export interface BulkReadingsViewProps {
   addHistory?: (entry: BillHistoryEntry) => void;
   history?: BillHistoryEntry[];
   downloadReceipt?: (tenant: any) => Promise<void>;
+  confirmAndGenerateBill?: (
+    tenantId: string,
+    period: string,
+    finalElec: number,
+    finalWater: number,
+    calculations: {
+      baseRent: number;
+      electricityCharges: number;
+      waterCharges: number;
+      otherFees: number;
+      openingBalance: number;
+      totalDue: number;
+    }
+  ) => any;
 }
 
 // Local storage key for confirmed/generated bills in a cycle
@@ -122,7 +136,9 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   updateTenants,
   rollover,
   addHistory,
-  downloadReceipt
+  history,
+  downloadReceipt,
+  confirmAndGenerateBill
 }) => {
   // Current active view tab: 'entry' | 'queue' | 'generated'
   const [activeTab, setActiveTab] = useState<'entry' | 'queue' | 'generated'>('entry');
@@ -179,17 +195,37 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     return new Set<string>();
   });
 
-  // Save generatedTenantIds to localStorage whenever changed
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        getGeneratedStorageKey(selectedPeriod),
-        JSON.stringify(Array.from(generatedTenantIds))
-      );
-    } catch (e) {
-      console.error(e);
+  // Source of Truth: Combine localStorage and persistent history so confirmed bills NEVER vanish on refresh!
+  const allGeneratedTenantIds = useMemo(() => {
+    const set = new Set<string>(generatedTenantIds);
+    if (Array.isArray(history)) {
+      history.forEach(h => {
+        if (h.month === selectedPeriod) {
+          if (Array.isArray(h.snapshot?.tenants)) {
+            h.snapshot.tenants.forEach(st => set.add(st.id));
+          }
+          tenants.forEach(t => {
+            if (h.id.includes(t.id)) set.add(t.id);
+          });
+        }
+      });
     }
-  }, [generatedTenantIds, selectedPeriod]);
+    return set;
+  }, [generatedTenantIds, history, selectedPeriod, tenants]);
+
+  // Keep localStorage continuously in sync with all confirmed bills
+  useEffect(() => {
+    if (allGeneratedTenantIds.size > 0) {
+      try {
+        localStorage.setItem(
+          getGeneratedStorageKey(selectedPeriod),
+          JSON.stringify(Array.from(allGeneratedTenantIds))
+        );
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, [allGeneratedTenantIds, selectedPeriod]);
 
   // Sync selectedPeriod with prop
   useEffect(() => {
@@ -207,6 +243,34 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
       }
     }
   }, [activeMonth]);
+
+  // Populate inputMap from confirmed bills in history for this period if present
+  useEffect(() => {
+    if (!Array.isArray(history)) return;
+    setInputMap(prev => {
+      let changed = false;
+      const next = { ...prev };
+      history.forEach(h => {
+        if (h.month === selectedPeriod && Array.isArray(h.snapshot?.tenants)) {
+          h.snapshot.tenants.forEach(st => {
+            const currentElec = next[st.id]?.elec;
+            const currentWater = next[st.id]?.water;
+            const snapElec = String(st.currElecReading ?? '');
+            const snapWater = String(st.currWaterReading ?? '');
+            if ((!currentElec || currentElec === '0') && snapElec && snapElec !== '0') {
+              next[st.id] = { ...(next[st.id] || { water: '' }), elec: snapElec };
+              changed = true;
+            }
+            if ((!currentWater || currentWater === '0') && snapWater && snapWater !== '0') {
+              next[st.id] = { ...(next[st.id] || { elec: '' }), water: snapWater };
+              changed = true;
+            }
+          });
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [history, selectedPeriod]);
 
   // Sync inputMap if tenants list changes
   useEffect(() => {
@@ -380,16 +444,16 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
   // Must have BOTH electricity and water readings entered AND not yet confirmed/generated for this period
   const readyTenants = useMemo(() => {
     return tenants.filter(t => {
-      if (generatedTenantIds.has(t.id)) return false;
+      if (allGeneratedTenantIds.has(t.id)) return false;
       const { isComplete } = getReadingsForTenant(t.id);
       return isComplete;
     });
-  }, [tenants, generatedTenantIds, getReadingsForTenant]);
+  }, [tenants, allGeneratedTenantIds, getReadingsForTenant]);
 
   // Already generated tenants
   const generatedTenants = useMemo(() => {
-    return tenants.filter(t => generatedTenantIds.has(t.id));
-  }, [tenants, generatedTenantIds]);
+    return tenants.filter(t => allGeneratedTenantIds.has(t.id));
+  }, [tenants, allGeneratedTenantIds]);
 
   // Calculation details helper for any tenant given current typed inputs
   const calculateBillingForTenant = useCallback((t: Tenant, overrideElec?: number, overrideWater?: number) => {
@@ -481,35 +545,85 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
     const finalWater = r.numWater ?? t.currWaterReading;
     const prop = propertyMap.get(t.propertyId);
 
-    // 1. Update tenant with confirmed meter readings
-    if (updateTenant) {
-      updateTenant(t.id, {
-        currElecReading: finalElec,
-        currWaterReading: finalWater,
-      });
+    // Compute complete itemized financial amounts
+    const elecUnits = Math.max(0, finalElec - t.prevElecReading);
+    const electricityCharges = elecUnits * (prop?.electricRate || 0);
+    const waterUnits = Math.max(0, finalWater - t.prevWaterReading);
+    const waterCharges = waterUnits * (prop?.waterRate || 0);
+    const baseRent = t.rent || 0;
+    const otherFees = (t.expenses || []).reduce((acc, exp) => acc + (Number(exp.amount) || 0), 0);
+    const openingBalance = t.previousDues || 0;
+    const totalDue = baseRent + electricityCharges + waterCharges + otherFees + openingBalance;
+
+    const calculations = {
+      baseRent,
+      electricityCharges,
+      waterCharges,
+      otherFees,
+      openingBalance,
+      totalDue,
+    };
+
+    // 1. If confirmAndGenerateBill is available, execute atomic persistence & state update
+    if (confirmAndGenerateBill) {
+      confirmAndGenerateBill(t.id, selectedPeriod, finalElec, finalWater, calculations);
+    } else {
+      // Direct fallback
+      if (updateTenant) {
+        updateTenant(t.id, {
+          currElecReading: finalElec,
+          currWaterReading: finalWater,
+          previousDues: openingBalance,
+          isPaid: false,
+          paidAmount: 0,
+          manualOverrides: {
+            baseRent,
+            electricityCharges,
+            waterCharges,
+            otherFees,
+            openingBalance,
+            totalDue,
+            paidAmount: 0,
+            isPaid: false,
+          },
+          updatedAt: Date.now()
+        });
+      }
+
+      if (addHistory && prop) {
+        const snapshotTenant: any = {
+          ...t,
+          currElecReading: finalElec,
+          currWaterReading: finalWater,
+          previousDues: openingBalance,
+          isPaid: false,
+          paidAmount: 0,
+          manualOverrides: {
+            baseRent,
+            electricityCharges,
+            waterCharges,
+            otherFees,
+            openingBalance,
+            totalDue,
+            paidAmount: 0,
+            isPaid: false,
+          }
+        };
+        const historyEntry: BillHistoryEntry = {
+          id: `bill_${t.id}_${selectedPeriod}_${Date.now()}`,
+          propertyId: prop.id,
+          month: selectedPeriod,
+          snapshot: {
+            property: prop,
+            tenants: [snapshotTenant],
+          },
+          createdAt: Date.now(),
+        };
+        addHistory(historyEntry);
+      }
     }
 
-    // 2. Add history entry snapshot permanently linking the bill
-    if (addHistory && prop) {
-      const snapshotTenant = {
-        ...t,
-        currElecReading: finalElec,
-        currWaterReading: finalWater,
-      };
-      const historyEntry: BillHistoryEntry = {
-        id: `bill_${t.id}_${selectedPeriod}_${Date.now()}`,
-        propertyId: prop.id,
-        month: selectedPeriod,
-        snapshot: {
-          property: prop,
-          tenants: [snapshotTenant],
-        },
-        createdAt: Date.now(),
-      };
-      addHistory(historyEntry);
-    }
-
-    // 3. Add audit log entry
+    // 2. Add audit log entry
     if (addAuditLog) {
       addAuditLog(
         t.id,
@@ -517,27 +631,38 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         selectedPeriod,
         'Bill Confirmed & Generated',
         `Prev Elec: ${t.prevElecReading}, Prev Water: ${t.prevWaterReading}`,
-        `Elec: ${finalElec}, Water: ${finalWater}`
+        `Elec: ${finalElec}, Water: ${finalWater}, Total Due: Rs ${totalDue}`
       );
     }
 
-    // 4. Recalculate billing balances
+    // 3. Recalculate billing balances
     if (recalculateBalances) {
       recalculateBalances();
     }
 
-    // 5. Permanently record this tenant as generated in local state & storage
+    // 4. Permanently record this tenant as generated in local state & storage
     setGeneratedTenantIds(prev => {
       const next = new Set(prev);
       next.add(tenantId);
       return next;
     });
 
-    if (showToast) {
-      showToast(`Bill confirmed and generated for ${t.name} (Room ${t.roomNumber})!`, 'success');
+    try {
+      const currentStored = localStorage.getItem(getGeneratedStorageKey(selectedPeriod));
+      const list = currentStored ? JSON.parse(currentStored) : [];
+      if (!list.includes(tenantId)) {
+        list.push(tenantId);
+        localStorage.setItem(getGeneratedStorageKey(selectedPeriod), JSON.stringify(list));
+      }
+    } catch (e) {
+      console.error(e);
     }
 
-    // 6. Advance to next ready tenant in queue if available
+    if (showToast) {
+      showToast(`Bill confirmed and generated for ${t.name} (Total: Rs ${totalDue.toLocaleString()})!`, 'success');
+    }
+
+    // 5. Advance to next ready tenant in queue if available
     const remainingInQueue = readyTenants.filter(item => item.id !== tenantId);
     if (remainingInQueue.length > 0) {
       setReviewTenantId(remainingInQueue[0].id);
@@ -799,42 +924,38 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
       
       {/* ========================================================
           1. HEADER AREA
-          - Title: Bulk Meter Readings
-          - Period selector (BS-2083-05)
-          - Navigation Tabs: Meter Readings | Review Queue (N) | Generated (M)
-          - Top actions: Spreadsheet Paste, Reset to Prev, Save Progress
+          - Header Bar: Single 48px row with back arrow, screen title, and active status pill
+          - Pipeline Stepper: 3-step segmented tab control (Step 1: Entry, Step 2: Review, Step 3: Generate)
+          - Header action icon: clipboard toggle button
          ======================================================== */}
-      <header className="sticky top-0 z-30 bg-[#111111]/95 backdrop-blur-xl border-b border-white/10 px-4 py-3 sm:px-8 shadow-xl">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <header className="sticky top-0 z-30 bg-[#111111]/95 backdrop-blur-xl border-b border-[#2C2C2E] px-4 shadow-xl">
+        {/* Single 48px row */}
+        <div className="max-w-7xl mx-auto h-12 flex items-center justify-between gap-3">
           
-          {/* Back button & Title */}
-          <div className="flex items-center gap-3 min-w-0">
+          {/* Left: Back button & Title */}
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               onClick={onBack}
-              className="h-10 w-10 sm:h-11 sm:w-11 bg-[#181818] hover:bg-white/10 border border-white/15 rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
+              className="h-8 w-8 bg-[#181818] hover:bg-white/10 border border-[#2C2C2E] rounded-lg text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
               title="Return to Previous Screen"
+              aria-label="Back"
             >
-              <ArrowLeft className="w-5 h-5 text-amber-400" />
+              <ArrowLeft className="w-4 h-4 text-amber-400" />
             </button>
-            <div className="min-w-0">
-              <h1 className="text-lg sm:text-xl font-black text-white tracking-tight truncate">
-                Bulk Meter Readings
-              </h1>
-              <p className="text-[11px] text-neutral-400 font-medium truncate hidden sm:block">
-                Manual entry + Spreadsheet paste • Review queue with one-by-one bill verification
-              </p>
-            </div>
+            <h1 className="text-base font-bold text-white tracking-tight truncate">
+              Bulk Meter Readings
+            </h1>
           </div>
 
-          {/* Period Selector & Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+          {/* Right: Active status pill + Header action icons */}
+          <div className="flex items-center gap-2 shrink-0">
             
-            {/* Period Selector Dropdown */}
+            {/* Period Selector Dropdown Pill */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsPeriodPickerOpen(!isPeriodPickerOpen)}
-                className="h-10 sm:h-11 px-3.5 rounded-xl bg-[#161616] hover:bg-[#202020] border border-amber-500/35 hover:border-amber-500/70 text-amber-300 font-mono font-bold text-xs sm:text-sm flex items-center gap-2 cursor-pointer transition-all shadow-sm active:scale-95"
+                className="h-8 px-2.5 rounded-lg bg-[#161616] hover:bg-[#202020] border border-amber-500/40 text-amber-300 font-mono font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
                 title="Select Billing Cycle Period"
               >
                 <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -843,8 +964,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
               </button>
 
               {isPeriodPickerOpen && (
-                <div className="absolute right-0 mt-2 w-52 bg-[#161616] border border-amber-500/40 rounded-xl p-1.5 shadow-2xl z-50 space-y-1">
-                  <div className="px-3 py-1 text-[10px] font-black uppercase tracking-wider text-neutral-400 border-b border-white/10">
+                <div className="absolute right-0 mt-1.5 w-48 bg-[#161616] border border-amber-500/40 rounded-xl p-1.5 shadow-2xl z-50 space-y-1">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-white/10">
                     Select Billing Period
                   </div>
                   {periodOptions.map(p => (
@@ -852,129 +973,109 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                       key={p}
                       type="button"
                       onClick={() => handleSelectPeriod(p)}
-                      className={`w-full text-left px-3 py-2 rounded-lg font-mono text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg font-mono text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
                         selectedPeriod === p 
                           ? 'bg-amber-500 text-black font-black' 
                           : 'text-neutral-200 hover:bg-white/10'
                       }`}
                     >
                       <span>{p}</span>
-                      {selectedPeriod === p && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      {selectedPeriod === p && <Check className="w-3 h-3 stroke-[3]" />}
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Toggle Spreadsheet Paste Tool Button */}
+            {/* Toggle Spreadsheet Paste Tool Header Action Icon */}
             <button
               type="button"
               onClick={() => setIsPasteToolOpen(!isPasteToolOpen)}
-              className={`h-10 sm:h-11 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm border ${
+              className={`h-8 w-8 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
                 isPasteToolOpen
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow-emerald-500/20'
-                  : 'bg-[#181818] hover:bg-white/10 border-white/15 text-neutral-300 hover:text-white'
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                  : 'bg-[#181818] border-[#2C2C2E] text-zinc-300 hover:text-white hover:bg-white/10'
               }`}
-              title="Open or close the spreadsheet bulk paste tool"
+              title={isPasteToolOpen ? 'Hide Paste Tool' : 'Spreadsheet Paste Tool'}
+              aria-label="Toggle Spreadsheet Paste Tool"
             >
-              <FileSpreadsheet className={`w-3.5 h-3.5 ${isPasteToolOpen ? 'text-slate-950' : 'text-emerald-400'}`} />
-              <span>{isPasteToolOpen ? 'Hide Paste Tool' : 'Spreadsheet Paste'}</span>
+              <ClipboardPaste className="w-4 h-4" />
             </button>
 
-            {/* Reset All to Previous */}
-            <button
-              type="button"
-              onClick={handleResetToPrevious}
-              className="h-10 sm:h-11 px-3 bg-[#181818] hover:bg-white/10 border border-white/15 text-neutral-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm"
-              title="Reset all inputs to previous cycle values"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              <span className="hidden md:inline">Reset to Prev</span>
-            </button>
-
-            {/* Roll Over to Next Month Button (Order 2) */}
+            {/* Roll Over to Next Month Action */}
             <button
               type="button"
               onClick={() => {
                 setRolloverTargetMonth(getNextBillingPeriod(selectedPeriod));
                 setIsRolloverModalOpen(true);
               }}
-              className="h-10 sm:h-11 px-3.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-black tracking-wide transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/10"
+              className="h-8 px-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 active:scale-95"
               title="Roll over readings and advance to next month"
             >
               <RotateCw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Roll Over to Next Month</span>
-            </button>
-
-            {/* Save In-Progress Readings */}
-            <button
-              type="button"
-              onClick={handleSaveInProgressReadings}
-              className="h-10 sm:h-11 px-4 bg-[#1f1f1f] hover:bg-[#282828] border border-white/20 text-neutral-200 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-sm"
-              title="Save typed readings into storage"
-            >
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Save Progress</span>
+              <span className="hidden sm:inline">Rollover</span>
             </button>
 
           </div>
 
         </div>
 
-        {/* Navigation Tabs Strip */}
-        <div className="max-w-7xl mx-auto mt-3 flex items-center gap-2 border-t border-white/5 pt-2">
-          
-          <button
-            type="button"
-            onClick={() => setActiveTab('entry')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'entry'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'bg-white/5 hover:bg-white/10 text-neutral-300'
-            }`}
-          >
-            <span>1. Meter Readings Entry</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              activeTab === 'entry' ? 'bg-black/20 text-slate-950 font-black' : 'bg-white/10 text-neutral-400'
-            }`}>
-              {tenants.length}
-            </span>
-          </button>
+        {/* Pipeline Stepper: Horizontal 3-step segmented tab control (12px Semi-Bold font) */}
+        <div className="max-w-7xl mx-auto py-2 border-t border-[#2C2C2E]">
+          <div className="grid grid-cols-3 bg-[#181818] p-1 rounded-xl border border-[#2C2C2E] gap-1">
+            
+            <button
+              type="button"
+              onClick={() => setActiveTab('entry')}
+              className={`h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                activeTab === 'entry'
+                  ? 'bg-white text-slate-950 shadow-sm font-bold'
+                  : 'text-[#A1A1AA] hover:text-white'
+              }`}
+            >
+              <span>Step 1: Entry</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeTab === 'entry' ? 'bg-slate-900/15 text-slate-950 font-bold' : 'bg-white/5 text-[#A1A1AA]'
+              }`}>
+                {tenants.length}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('queue')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'queue'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'bg-white/5 hover:bg-white/10 text-neutral-300'
-            }`}
-          >
-            <span>2. Ready for Review</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              activeTab === 'queue' ? 'bg-black/20 text-slate-950 font-black' : 'bg-emerald-500/20 text-emerald-300 font-black'
-            }`}>
-              {readyTenants.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('queue')}
+              className={`h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                activeTab === 'queue'
+                  ? 'bg-white text-slate-950 shadow-sm font-bold'
+                  : 'text-[#A1A1AA] hover:text-white'
+              }`}
+            >
+              <span>Step 2: Review</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeTab === 'queue' ? 'bg-slate-900/15 text-slate-950 font-bold' : 'bg-amber-500/20 text-amber-300 font-bold'
+              }`}>
+                {readyTenants.length}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('generated')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'generated'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'bg-white/5 hover:bg-white/10 text-neutral-300'
-            }`}
-          >
-            <span>3. Generated Bills</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              activeTab === 'generated' ? 'bg-black/20 text-slate-950 font-black' : 'bg-white/10 text-neutral-400'
-            }`}>
-              {generatedTenants.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('generated')}
+              className={`h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                activeTab === 'generated'
+                  ? 'bg-white text-slate-950 shadow-sm font-bold'
+                  : 'text-[#A1A1AA] hover:text-white'
+              }`}
+            >
+              <span>Step 3: Generate</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeTab === 'generated' ? 'bg-slate-900/15 text-slate-950 font-bold' : 'bg-emerald-500/20 text-emerald-300 font-bold'
+              }`}>
+                {generatedTenants.length}
+              </span>
+            </button>
 
+          </div>
         </div>
       </header>
 
@@ -1063,13 +1164,13 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
               </div>
             </div>
 
-            {/* Multi-row Paste Textarea */}
+            {/* Multi-row Paste Textarea: max-h-[120px] with internal scrolling */}
             <textarea
-              rows={5}
+              rows={4}
               value={pasteInputText}
               onChange={e => setPasteInputText(e.target.value)}
               placeholder={`101, 14280, 195\n102, 11450, 210\nAatif Ansari, 15300, 220`}
-              className="w-full bg-[#0d0f0e] border border-white/15 focus:border-emerald-500 rounded-2xl p-3.5 font-mono text-xs sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none transition-all shadow-inner leading-relaxed"
+              className="w-full max-h-[120px] overflow-y-auto bg-[#0d0f0e] border border-white/15 focus:border-emerald-500 rounded-2xl p-3 font-mono text-xs sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none transition-all shadow-inner leading-relaxed"
             />
 
             {/* Paste Feedback / Parsing Results */}
@@ -1118,10 +1219,10 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
               <button
                 type="button"
                 onClick={handleParseAndFillSpreadsheet}
-                className="h-11 px-6 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-lg shadow-emerald-500/20"
+                className="h-11 px-6 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-lg shadow-emerald-500/20"
               >
                 <Check className="w-4 h-4 stroke-[3]" />
-                <span>Parse & Fill Current Readings</span>
+                <span>Parse & Fill Readings</span>
               </button>
             </div>
 
@@ -1285,9 +1386,9 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                               step="any"
                               value={inputMap[t.id]?.elec ?? ''}
                               onChange={e => handleInputChange(t.id, 'elec', e.target.value)}
-                              placeholder="Type reading"
+                              placeholder="0"
                               aria-label={`Current electricity reading for room ${t.roomNumber}`}
-                              className="w-24 sm:w-28 h-9 text-right font-mono font-bold text-xs sm:text-sm bg-[#161616] border border-white/15 focus:border-amber-500 rounded-lg px-2.5 text-amber-300 focus:outline-none transition-all"
+                              className="w-24 sm:w-28 h-9 text-right font-mono font-semibold text-sm bg-[#1F2937] border border-[#374151] focus:border-amber-500 rounded-lg px-2.5 text-white focus:outline-none transition-all"
                             />
                           </div>
                         </div>
@@ -1314,9 +1415,9 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                               step="any"
                               value={inputMap[t.id]?.water ?? ''}
                               onChange={e => handleInputChange(t.id, 'water', e.target.value)}
-                              placeholder="Type reading"
+                              placeholder="0"
                               aria-label={`Current water reading for room ${t.roomNumber}`}
-                              className="w-24 sm:w-28 h-9 text-right font-mono font-bold text-xs sm:text-sm bg-[#161616] border border-white/15 focus:border-cyan-500 rounded-lg px-2.5 text-cyan-300 focus:outline-none transition-all"
+                              className="w-24 sm:w-28 h-9 text-right font-mono font-semibold text-sm bg-[#1F2937] border border-[#374151] focus:border-cyan-500 rounded-lg px-2.5 text-white focus:outline-none transition-all"
                             />
                           </div>
                         </div>
@@ -1332,7 +1433,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                               <CheckCircle2 className="w-3 h-3" /> Updated from Paste
                             </span>
                           ) : isGenerated ? (
-                            <span className="text-emerald-400 font-bold flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
                               <CheckCircle2 className="w-3 h-3" /> Bill Generated
                             </span>
                           ) : isReady ? (
@@ -1352,7 +1453,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                             <button
                               type="button"
                               onClick={() => setReviewTenantId(t.id)}
-                              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-neutral-300 rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1"
+                              className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-neutral-200 hover:text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1"
                             >
                               <Eye className="w-3 h-3" /> View Bill
                             </button>
@@ -1614,8 +1715,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
             - Skip / Back
          ======================================================== */}
       {reviewTenantId && activeReviewTenant && activeReviewBilling && (
-        <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 pb-32 sm:pb-40 overflow-y-auto">
-          <div className="bg-[#111111] border-2 border-white/15 rounded-3xl max-w-2xl w-full p-5 sm:p-8 space-y-6 shadow-2xl relative my-auto max-h-[calc(100vh-140px)] flex flex-col justify-between overflow-y-auto">
+        <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain">
+          <div className="bg-[#111111] border-2 border-white/15 rounded-2xl sm:rounded-3xl max-w-2xl w-full p-4 sm:p-6 space-y-5 shadow-2xl relative my-auto max-h-[92dvh] sm:max-h-[88dvh] flex flex-col justify-between overflow-y-auto overscroll-contain">
             
             {/* Modal Header */}
             <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
@@ -1826,8 +1927,8 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
           - Cancel and Confirm buttons
          ======================================================== */}
       {isRolloverModalOpen && (
-        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 pb-32 sm:pb-40 overflow-y-auto">
-          <div className="bg-[#121415] border-2 border-amber-500/40 rounded-3xl max-w-3xl w-full p-5 sm:p-7 space-y-5 shadow-2xl relative my-auto max-h-[calc(100vh-140px)] flex flex-col">
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto overscroll-contain">
+          <div className="bg-[#121415] border-2 border-amber-500/40 rounded-2xl sm:rounded-3xl max-w-3xl w-full p-4 sm:p-6 space-y-5 shadow-2xl relative my-auto max-h-[92dvh] sm:max-h-[88dvh] flex flex-col overflow-y-auto overscroll-contain">
             
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
@@ -2058,27 +2159,27 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
         );
       })}
 
-      {/* Fixed Footer Bar for Quick Navigation / Global Save (lifted above bottom navigation bar) */}
-      <footer className="fixed bottom-24 left-0 right-0 z-40 bg-[#111111]/95 backdrop-blur-xl border-t border-b border-white/10 px-4 py-2.5 sm:px-8 shadow-2xl">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-xs">
+      {/* Docked Sticky Bottom Strip: 56px height (h-14) positioned directly above the bottom navigation bar */}
+      <footer className="fixed bottom-16 left-0 right-0 z-40 h-14 bg-[#111111]/95 backdrop-blur-xl border-t border-[#2C2C2E] px-4 sm:px-8 shadow-2xl flex items-center">
+        <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3 text-xs">
           
           <div className="flex items-center gap-2 font-mono">
-            <span className="text-neutral-400">Active Cycle:</span>
+            <span className="text-[#A1A1AA]">Active Cycle:</span>
             <strong className="text-amber-400 font-bold">{selectedPeriod}</strong>
             <span className="text-neutral-600 hidden sm:inline">•</span>
-            <span className="text-neutral-400 hidden sm:inline">
+            <span className="text-[#A1A1AA] hidden sm:inline">
               Ready: <strong className="text-white">{readyTenants.length}</strong> | Generated: <strong className="text-emerald-400">{generatedTenants.length}</strong>
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {readyTenants.length > 0 && activeTab !== 'queue' && (
               <button
                 type="button"
                 onClick={() => setActiveTab('queue')}
-                className="h-10 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+                className="h-9 px-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs cursor-pointer transition-all active:scale-95 flex items-center gap-1.5 shadow-sm"
               >
-                <span>Review Queue ({readyTenants.length})</span>
+                <span>Review ({readyTenants.length})</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -2089,7 +2190,7 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
                 setRolloverTargetMonth(getNextBillingPeriod(selectedPeriod));
                 setIsRolloverModalOpen(true);
               }}
-              className="h-10 px-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95 hidden sm:flex items-center gap-1.5"
+              className="h-9 px-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:text-amber-200 rounded-lg text-xs font-semibold cursor-pointer transition-all active:scale-95 hidden sm:flex items-center gap-1.5"
               title="Roll over to next month"
             >
               <RotateCw className="w-3.5 h-3.5 text-amber-400" />
@@ -2099,9 +2200,9 @@ export const BulkReadingsView: React.FC<BulkReadingsViewProps> = ({
             <button
               type="button"
               onClick={handleSaveInProgressReadings}
-              className="h-10 px-4 bg-[#202020] hover:bg-[#282828] border border-white/15 text-neutral-200 hover:text-white rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95"
+              className="h-9 px-3.5 bg-[#202020] hover:bg-[#282828] border border-[#2C2C2E] text-neutral-200 hover:text-white rounded-lg text-xs font-semibold cursor-pointer transition-all active:scale-95"
             >
-              Save All Typed Readings
+              Save Progress
             </button>
           </div>
 

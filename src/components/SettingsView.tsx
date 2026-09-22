@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Property, BillHistoryEntry } from '../types';
 import { formatCurrency } from '../lib/utils';
+import { normalizeAndValidateBackup } from '../lib/storage';
 import { 
   Home, Users, ShieldAlert, Sparkles, SlidersHorizontal, AlertCircle, 
   Trash2, Edit2, Plus, Calendar, RefreshCw, KeyRound, Download, 
@@ -128,62 +129,95 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  // Handle local export file trigger
-  const handleExportJSON = () => {
+  const [testValidationResult, setTestValidationResult] = useState<{
+    status: 'idle' | 'valid' | 'invalid';
+    message: string;
+    details?: { properties: number; tenants: number; history: number };
+  }>({ status: 'idle', message: '' });
+
+  // Handle local export file trigger using Blob to prevent data truncation
+  const handleExportJSON = (customName?: string) => {
     try {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+      const fileName = customName || 'Rentflo_Backup_21Sep2026_Fresh.json';
+      const cleanData = {
+        properties: data.properties || [],
+        tenants: data.tenants || [],
+        history: data.history || [],
+        activeMonth: data.activeMonth || '',
+        calendarSystem: data.calendarSystem || 'AD',
+        auditLogs: data.auditLogs || [],
+        exportedAt: new Date().toISOString()
+      };
+      const jsonStr = JSON.stringify(cleanData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
       const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", `Rentflo_Backup_${new Date().toISOString().split('T')[0]}.json`);
+      downloadAnchor.href = url;
+      downloadAnchor.download = fileName;
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
-      downloadAnchor.remove();
-      showToast("Ledger backup downloaded successfully", "success");
-    } catch (e) {
-      showToast("Backup export failed", "error");
+      document.body.removeChild(downloadAnchor);
+      URL.revokeObjectURL(url);
+      showToast(`Fresh backup "${fileName}" downloaded successfully!`, "success");
+    } catch (e: any) {
+      showToast(`Backup export failed: ${e?.message || 'unknown error'}`, "error");
     }
   };
 
-  // Helper to parse and validate any Rentflo JSON backup payload
-  const parseAndValidateBackup = (rawObj: any) => {
-    let target = rawObj;
-    if (target && typeof target === 'object') {
-      if (target.payload && typeof target.payload === 'object') {
-        target = target.payload;
-      } else if (target.data && typeof target.data === 'object') {
-        target = target.data;
-      }
+  // Test / Verify backup integrity without overwriting database
+  const handleTestBackup = (sourceString?: string) => {
+    try {
+      const contentToTest = sourceString || jsonBackupString || JSON.stringify(data);
+      const validated = normalizeAndValidateBackup(contentToTest);
+      setTestValidationResult({
+        status: 'valid',
+        message: `Validation passed! Backup is completely intact and ready to import.`,
+        details: {
+          properties: validated.properties.length,
+          tenants: validated.tenants.length,
+          history: validated.history.length
+        }
+      });
+      showToast(`Backup verified: ${validated.properties.length} properties, ${validated.tenants.length} tenants, ${validated.history.length} bills`, "success");
+    } catch (err: any) {
+      setTestValidationResult({
+        status: 'invalid',
+        message: `Validation failed: ${err?.message || 'Invalid format'}`
+      });
+      showToast(`Verification failed: ${err?.message}`, "error");
     }
-    if (!target || typeof target !== 'object') {
-      throw new Error("Invalid backup: data is not an object");
-    }
-    if (!Array.isArray(target.properties) || !Array.isArray(target.tenants)) {
-      throw new Error("Invalid backup schema: missing properties or tenants list");
-    }
-    return target;
   };
 
-  // Handle local import file trigger
+  // Handle local import pasted string trigger
   const handleImportJSON = async () => {
     if (!jsonBackupString.trim()) {
       alert("Please paste a valid JSON backup string in the input field first.");
       return;
     }
     try {
-      const rawParsed = JSON.parse(jsonBackupString.trim());
-      const validatedData = parseAndValidateBackup(rawParsed);
+      const validatedData = normalizeAndValidateBackup(jsonBackupString.trim());
       
-      if (confirm("Are you sure you want to restore data? This will overwrite your current database state with the backup contents.")) {
+      const confirmMsg = `Found valid backup:\n- ${validatedData.properties.length} Properties\n- ${validatedData.tenants.length} Tenants\n- ${validatedData.history.length} Bills in History\n\nDo you want to restore this data to your app now?`;
+      if (confirm(confirmMsg)) {
         const success = await restoreData(validatedData);
         if (success) {
-          showToast("Database restored successfully", "success");
+          showToast(`Database restored successfully (${validatedData.tenants.length} tenants, ${validatedData.history.length} bills)`, "success");
           setJsonBackupString('');
+          setTestValidationResult({
+            status: 'valid',
+            message: `Successfully imported ${validatedData.tenants.length} tenants and ${validatedData.history.length} bills!`,
+            details: {
+              properties: validatedData.properties.length,
+              tenants: validatedData.tenants.length,
+              history: validatedData.history.length
+            }
+          });
         } else {
-          showToast("Failed to write data to IndexedDB", "error");
+          showToast("Failed to restore data to persistent storage", "error");
         }
       }
-    } catch (e) {
-      alert("Import failed. Verify the copied JSON backup is standard Rentflo format.");
+    } catch (e: any) {
+      alert(`Import failed: ${e?.message || "Verify the copied JSON backup is standard Rentflo format."}`);
     }
   };
 
@@ -196,20 +230,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const rawParsed = JSON.parse(text);
-        const validatedData = parseAndValidateBackup(rawParsed);
+        const validatedData = normalizeAndValidateBackup(text);
 
-        if (confirm("Are you sure you want to restore data from this file? This will overwrite your current database state with the backup contents.")) {
+        const confirmMsg = `Backup file "${file.name}" is valid:\n- ${validatedData.properties.length} Properties\n- ${validatedData.tenants.length} Tenants\n- ${validatedData.history.length} Bills in History\n\nDo you want to restore this data into your app?`;
+        if (confirm(confirmMsg)) {
           const success = await restoreData(validatedData);
           if (success) {
-            showToast("Database restored successfully from file", "success");
+            showToast(`Database restored successfully from "${file.name}"!`, "success");
             setJsonBackupString('');
+            setTestValidationResult({
+              status: 'valid',
+              message: `Successfully imported "${file.name}"!`,
+              details: {
+                properties: validatedData.properties.length,
+                tenants: validatedData.tenants.length,
+                history: validatedData.history.length
+              }
+            });
           } else {
-            showToast("Failed to write data to IndexedDB", "error");
+            showToast("Failed to write data to persistent storage", "error");
           }
         }
-      } catch (err) {
-        alert("Import failed. Please verify that this is a valid Rentflo JSON backup file.");
+      } catch (err: any) {
+        alert(`Import failed for "${file.name}": ${err?.message || "Please verify this is a valid Rentflo JSON file."}`);
       }
     };
     reader.readAsText(file);
@@ -219,91 +262,147 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   return (
     <div className="space-y-6 text-left pb-16">
       {/* Page Header */}
-      <div className="border-b border-white/5 pb-4">
-        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-[#A3A3A3] font-mono leading-none">System Settings</p>
-        <h2 className="text-2xl font-black text-white font-sans tracking-tight mt-1">Preferences & Configurations</h2>
+      <div className="border-b border-[#2C2C2E] pb-4">
+        <p className="text-[11px] font-bold text-[#A1A1AA] uppercase tracking-wider">System Settings</p>
+        <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-0.5">Preferences & Configurations</h2>
       </div>
 
-      {/* Spacing & Bento Grid Layout for Settings Section Switcher */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      {/* Spacing & Layout for Settings Section Switcher */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* Navigation Sidebar Drawer (4 columns) */}
-        <div className="lg:col-span-3 space-y-2 bg-[#111111] p-4 rounded-3xl border border-white/5">
-          <p className="text-[9px] font-mono uppercase text-[#A3A3A3] tracking-wider px-2 mb-3">Settings Categories</p>
+        {/* Navigation Sidebar: Clean vertical lists grouped under clear category titles */}
+        <div className="lg:col-span-4 space-y-4">
           
-          <button
-            onClick={() => setActiveSection('properties')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'properties' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <Home className="w-4 h-4" />
-            Properties
-          </button>
+          {/* Category: Property Management */}
+          <div className="bg-[#111111] p-3 rounded-2xl border border-[#2C2C2E] space-y-1">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#A1A1AA] px-2.5 py-1">
+              Property Management
+            </p>
+            
+            <button
+              onClick={() => setActiveSection('properties')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'properties' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Home className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Properties Directory</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
 
-          <button
-            onClick={() => setActiveSection('history')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'history' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <History className="w-4 h-4" />
-            Transaction History
-          </button>
+            <button
+              onClick={() => setActiveSection('rates')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'rates' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <SlidersHorizontal className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Utility Rates</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
 
-          <button
-            onClick={() => setActiveSection('rates')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'rates' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <SlidersHorizontal className="w-4 h-4" />
-            Utility Rates
-          </button>
+            <button
+              onClick={() => setActiveSection('history')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'history' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <History className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Transaction History</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
+          </div>
 
-          <button
-            onClick={() => setActiveSection('utilities')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'utilities' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            Calendar Systems
-          </button>
+          {/* Category: Localization & Preferences */}
+          <div className="bg-[#111111] p-3 rounded-2xl border border-[#2C2C2E] space-y-1">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#A1A1AA] px-2.5 py-1">
+              Localization & Preferences
+            </p>
 
-          <button
-            onClick={() => setActiveSection('backup')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'backup' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <Upload className="w-4 h-4" />
-            Cloud & Sync Backups
-          </button>
+            <button
+              onClick={() => setActiveSection('utilities')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'utilities' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Calendar Systems</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
 
-          <button
-            onClick={() => setActiveSection('security')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'security' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <KeyRound className="w-4 h-4" />
-            Audit & Override Security
-          </button>
+            <button
+              onClick={() => setActiveSection('other')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'other' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Info className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Theme & Preferences</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
+          </div>
 
-          <button
-            onClick={() => setActiveSection('other')}
-            className={`w-full p-3 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-3 transition-all cursor-pointer ${
-              activeSection === 'other' ? 'bg-[#181818] border border-white/10 text-white' : 'text-[#A3A3A3] hover:text-white'
-            }`}
-          >
-            <Info className="w-4 h-4" />
-            Theme & Notifications
-          </button>
+          {/* Category: Security & Data */}
+          <div className="bg-[#111111] p-3 rounded-2xl border border-[#2C2C2E] space-y-1">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#A1A1AA] px-2.5 py-1">
+              Security & Data
+            </p>
+
+            <button
+              onClick={() => setActiveSection('backup')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'backup' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Upload className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Cloud & Local Backups</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
+
+            <button
+              onClick={() => setActiveSection('security')}
+              className={`w-full h-12 px-3.5 rounded-xl text-sm font-semibold flex items-center justify-between transition-all cursor-pointer active:scale-[0.99] ${
+                activeSection === 'security' 
+                  ? 'bg-[#181818] border border-[#2C2C2E] text-white shadow-sm' 
+                  : 'text-[#A1A1AA] hover:text-white hover:bg-white/[0.03] border border-transparent'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Audit & Override Security</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#A1A1AA]" />
+            </button>
+          </div>
+
         </div>
 
-        {/* Content Panel Box (9 columns) */}
-        <div className="lg:col-span-9 bg-[#111111] p-6 rounded-3xl border border-white/5 space-y-6">
+        {/* Content Panel Box (8 columns) */}
+        <div className="lg:col-span-8 bg-[#111111] p-5 sm:p-6 rounded-3xl border border-[#2C2C2E] space-y-6">
           
           {/* TRANSACTION HISTORY PANEL */}
           {activeSection === 'history' && (
@@ -378,55 +477,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div className="space-y-3">
                 {filteredProperties.length === 0 ? (
-                  <p className="text-xs text-[#A3A3A3] italic py-8 text-center border border-dashed border-white/5 rounded-2xl">
+                  <p className="text-xs text-[#A3A3A3] italic py-8 text-center border border-dashed border-[#2C2C2E] rounded-2xl">
                     {propertySearch ? 'No properties matched your filter.' : 'No active facilities registered. Add properties to configure utility meters.'}
                   </p>
                 ) : (
-                  filteredProperties.map(p => (
-                    <div 
-                      key={p.id} 
-                      onClick={() => setQuickViewProperty(p)}
-                      className="p-4 bg-[#181818] hover:bg-[#1f1f1f] border border-white/5 hover:border-white/10 rounded-2xl flex items-center justify-between transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-amber-400 font-mono text-[10px] font-bold shrink-0">
-                          ID: {p.id.length > 12 ? p.id.slice(0, 10) + '…' : p.id}
-                        </span>
-                        <div className="min-w-0">
-                          <h4 className="font-bold text-xs text-white flex items-center gap-2 truncate">
-                            <Home className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="truncate">{p.name}</span>
-                          </h4>
-                          <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-[#A3A3A3] mt-1">
-                            <span className="text-amber-400 font-semibold">⚡ Elec: NPR {p.electricRate}/unit</span>
-                            <span>•</span>
-                            <span className="text-cyan-400 font-semibold">💧 Water: NPR {p.waterRate}/unit</span>
+                  filteredProperties.map(p => {
+                    const tenantCount = data?.tenants ? data.tenants.filter((t: any) => t.propertyId === p.id).length : 0;
+                    return (
+                      <div 
+                        key={p.id} 
+                        onClick={() => setQuickViewProperty(p)}
+                        className="p-4 bg-[#181818] hover:bg-[#1f1f1f] active:scale-[0.99] border border-[#2C2C2E] rounded-2xl flex items-center justify-between transition-all cursor-pointer group shadow-sm"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-white/5 border border-[#2C2C2E] flex items-center justify-center shrink-0">
+                            <Home className="w-5 h-5 text-amber-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-base font-bold text-white truncate">
+                              {p.name}
+                            </h4>
+                            <p className="text-xs font-normal text-[#9CA3AF] mt-0.5 truncate">
+                              {tenantCount} {tenantCount === 1 ? 'Unit' : 'Units'} • {p.address || 'Kathmandu'}
+                            </p>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => setEditingRatesProperty(p)}
-                          className="p-2 bg-[#111111] hover:bg-amber-500/20 border border-white/5 hover:border-amber-500/30 rounded-xl text-[#A3A3A3] hover:text-amber-400 cursor-pointer transition-all"
-                          title="Edit Utility Rates Only"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Are you sure you want to completely delete ${p.name}? This action is irreversible.`)) {
-                              deleteProperty(p.id);
-                            }
-                          }}
-                          className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 rounded-xl cursor-pointer transition-all"
-                          title="Delete Property"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
+                          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-[#A1A1AA] mr-2">
+                            <span>⚡ ₹{p.electricRate}/U</span>
+                            <span>•</span>
+                            <span>💧 ₹{p.waterRate}/U</span>
+                          </div>
+                          <button
+                            onClick={() => setEditingRatesProperty(p)}
+                            className="p-2 bg-[#111111] hover:bg-amber-500/20 border border-[#2C2C2E] hover:border-amber-500/30 rounded-xl text-[#A1A1AA] hover:text-amber-400 cursor-pointer transition-all"
+                            title="Edit Utility Rates Only"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to completely delete ${p.name}? This action is irreversible.`)) {
+                                deleteProperty(p.id);
+                              }
+                            }}
+                            className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl cursor-pointer transition-all"
+                            title="Delete Property"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <ChevronRight className="w-4 h-4 text-[#A1A1AA] group-hover:text-white transition-colors ml-1" />
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
@@ -699,11 +804,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {/* Local File Export / Import JSON */}
               <div className="p-5 bg-[#181818] border border-white/5 rounded-2xl space-y-4">
                 <div>
-                  <h4 className="font-bold text-xs text-white">Local Ledger Backup Tool</h4>
-                  <p className="text-[10px] text-[#A3A3A3] mt-0.5">Export full JSON files locally or select a previously backed up JSON file to restore.</p>
+                  <h4 className="font-bold text-xs text-white">Local Ledger Backup & Integrity Tool</h4>
+                  <p className="text-[10px] text-[#A3A3A3] mt-0.5">Export reliable JSON backup files or verify and restore previous backups safely.</p>
                 </div>
 
-                <div className="space-y-4">
+                {/* Primary Fresh Backup Button as requested */}
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider block">Recommended Fresh Backup</span>
+                      <span className="text-[10px] text-emerald-300/80 font-mono block mt-0.5">Rentflo_Backup_21Sep2026_Fresh.json</span>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 text-[9px] font-mono font-bold uppercase rounded">
+                      {data.tenants?.length || 0} Tenants • {data.history?.length || 0} Bills
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <button
+                      onClick={() => handleExportJSON('Rentflo_Backup_21Sep2026_Fresh.json')}
+                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] tracking-wider uppercase rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
+                    >
+                      <Download className="w-4 h-4 stroke-[2.5]" />
+                      Download Fresh Backup (.json)
+                    </button>
+
+                    <button
+                      onClick={() => handleTestBackup()}
+                      className="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-mono font-bold text-[10px] tracking-wider uppercase rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      Test Current Ledger Integrity
+                    </button>
+                  </div>
+                </div>
+
+                {/* Validation Test Status Feedback Banner */}
+                {testValidationResult.status !== 'idle' && (
+                  <div className={`p-3 rounded-xl border text-xs ${
+                    testValidationResult.status === 'valid'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-red-500/10 border-red-500/30 text-red-300'
+                  }`}>
+                    <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-[10px]">
+                      {testValidationResult.status === 'valid' ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertCircle className="w-4 h-4 text-red-400" />}
+                      {testValidationResult.message}
+                    </div>
+                    {testValidationResult.details && (
+                      <div className="mt-2 pt-2 border-t border-white/10 text-[10px] font-mono grid grid-cols-3 gap-2">
+                        <div>Properties: <span className="font-bold text-white">{testValidationResult.details.properties}</span></div>
+                        <div>Tenants: <span className="font-bold text-white">{testValidationResult.details.tenants}</span></div>
+                        <div>Bill Records: <span className="font-bold text-white">{testValidationResult.details.history}</span></div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-4 pt-2">
                   {/* File Upload Selector Zone */}
                   <div className="border border-dashed border-white/10 rounded-2xl p-4 bg-[#111111]/50 flex flex-col items-center justify-center gap-3 text-center transition-all duration-300 hover:border-white/20 hover:bg-[#111111]/80 group">
                     <div className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#A3A3A3] group-hover:text-white group-hover:border-white/20 transition-all">
@@ -711,17 +868,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                     <div>
                       <span className="text-xs font-bold text-white uppercase tracking-wider block">Select Backup JSON File</span>
-                      <span className="text-[9px] text-[#A3A3A3] uppercase tracking-wider block mt-0.5">Choose a standard Rentflo backup JSON file to restore</span>
+                      <span className="text-[9px] text-[#A3A3A3] uppercase tracking-wider block mt-0.5">Supports fresh or historical Rentflo JSON files (with automatic schema unwrapping)</span>
                     </div>
                     <label className="px-4 py-2 bg-white text-slate-950 hover:bg-neutral-100 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all flex items-center gap-1.5 shadow-md">
-                      Browse File
+                      Browse & Restore File
                       <input type="file" className="hidden" accept=".json" onChange={handleFileSelect} />
                     </label>
                   </div>
 
                   <div className="relative flex items-center py-1">
                     <div className="flex-grow border-t border-white/5"></div>
-                    <span className="flex-shrink mx-3 text-[9px] text-[#A3A3A3]/60 uppercase tracking-widest font-mono">Or paste raw text string</span>
+                    <span className="flex-shrink mx-3 text-[9px] text-[#A3A3A3]/60 uppercase tracking-widest font-mono">Or test/paste raw JSON text string</span>
                     <div className="flex-grow border-t border-white/5"></div>
                   </div>
 
@@ -729,25 +886,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <textarea
                       value={jsonBackupString}
                       onChange={(e) => setJsonBackupString(e.target.value)}
-                      placeholder="Paste full JSON backup content here..."
+                      placeholder="Paste raw JSON backup content here to test or restore..."
                       className="w-full h-20 bg-[#111111] border border-white/5 rounded-xl p-3 text-xs font-mono text-[#A3A3A3] placeholder-[#A3A3A3]/40 focus:outline-none"
                     />
 
                     <div className="grid grid-cols-2 gap-2">
                       <button
-                        onClick={handleExportJSON}
-                        className="w-full py-2 bg-[#111111] hover:bg-white/5 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        onClick={() => handleTestBackup(jsonBackupString)}
+                        disabled={!jsonBackupString.trim()}
+                        className="w-full py-2 bg-[#111111] hover:bg-white/5 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                       >
-                        <Download className="w-3.5 h-3.5" />
-                        Export JSON File
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                        Verify Pasted String
                       </button>
 
                       <button
                         onClick={handleImportJSON}
-                        className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        disabled={!jsonBackupString.trim()}
+                        className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-mono font-black text-[9px] tracking-widest uppercase rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                       >
                         <Upload className="w-3.5 h-3.5" />
-                        Restore pasted text
+                        Restore Pasted Text
                       </button>
                     </div>
                   </div>
@@ -759,25 +918,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* SECURITY & AUDIT PANEL */}
           {activeSection === 'security' && (
             <div className="space-y-6 animate-fade-in text-left">
-              <div className="border-b border-white/5 pb-3">
-                <h3 className="font-bold text-sm text-white uppercase tracking-wider">Override & Audit Control</h3>
-                <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wide">Tweak manual overrides and review the tamper-evident operations log</p>
+              <div className="border-b border-[#2C2C2E] pb-3">
+                <h3 className="font-bold text-base text-white">Audit & Override Security</h3>
+                <p className="text-xs text-[#A1A1AA] mt-0.5">Manage administrative overrides and inspect database audit logs</p>
               </div>
 
               {/* Master Override Mode block */}
-              <div className="bg-[#181818] p-5 rounded-2xl border border-white/5 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-white">Master Arithmetic Overrides</h4>
-                  <p className="text-[10px] text-[#A3A3A3] mt-0.5">Permits direct manual edits of rent and utility invoice fields.</p>
+              <div className="bg-[#181818] p-5 rounded-2xl border border-[#2C2C2E] flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                    <h4 className="font-bold text-sm text-white">Support Override Mode</h4>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      supportMasterOverrideMode 
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                        : 'bg-white/5 text-[#A1A1AA] border border-white/10'
+                    }`}>
+                      {supportMasterOverrideMode ? 'Active' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#A1A1AA] leading-relaxed">
+                    Permits direct manual edits of rent and utility invoice fields, historical recalculations, and emergency ledger corrections.
+                  </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={toggleSupportMasterMode}
-                  className={`w-12 h-6.5 rounded-full p-1 transition-colors cursor-pointer ${
-                    supportMasterOverrideMode ? 'bg-orange-500' : 'bg-white/15'
+                  className={`w-12 h-6.5 rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                    supportMasterOverrideMode ? 'bg-amber-500' : 'bg-white/15'
                   }`}
+                  aria-label="Toggle Support Master Override Mode"
                 >
-                  <div className={`w-4.5 h-4.5 rounded-full bg-white transition-transform ${
+                  <div className={`w-4.5 h-4.5 rounded-full bg-slate-950 transition-transform ${
                     supportMasterOverrideMode ? 'translate-x-5.5' : 'translate-x-0'
                   }`} />
                 </button>
@@ -786,23 +959,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {/* Database Audit Log */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center px-1">
-                  <p className="text-[9px] font-mono uppercase text-[#A3A3A3] tracking-wider">Database Operations Audit Logs ({auditLogs.length})</p>
-                  <button
-                    onClick={clearAuditLogs}
-                    className="text-red-500 font-bold uppercase text-[9px] tracking-widest cursor-pointer hover:underline"
-                  >
-                    Clear Logs
-                  </button>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[#A1A1AA]">
+                    Database Operations Audit Logs ({auditLogs.length})
+                  </p>
+                  {auditLogs.length > 0 && (
+                    <button
+                      onClick={clearAuditLogs}
+                      className="text-red-400 hover:text-red-300 font-semibold text-xs cursor-pointer transition-colors"
+                    >
+                      Clear Logs
+                    </button>
+                  )}
                 </div>
 
-                <div className="p-3 bg-[#181818] rounded-xl border border-white/5 max-h-48 overflow-y-auto space-y-2 text-[10px] font-mono text-[#A3A3A3]">
+                <div className="p-3 bg-[#181818] rounded-xl border border-[#2C2C2E] max-h-56 overflow-y-auto space-y-2 text-xs font-mono text-[#A1A1AA]">
                   {auditLogs.length === 0 ? (
-                    <p className="italic text-center py-4">No logged records. Actions like collections or adding properties create audit nodes.</p>
+                    <p className="italic text-center py-6 text-[#A1A1AA]">
+                      No logged records. Actions like collections or adding properties create tamper-evident audit nodes.
+                    </p>
                   ) : (
                     auditLogs.map((log, idx) => (
-                      <div key={idx} className="border-b border-white/5 pb-1 flex justify-between gap-4">
-                        <span>[{new Date(log.timestamp).toLocaleTimeString()}] {log.action} - {log.details}</span>
-                        <span className="text-white font-bold shrink-0">{log.user || 'System'}</span>
+                      <div key={idx} className="border-b border-[#2C2C2E] pb-1.5 flex justify-between gap-4 last:border-0">
+                        <span className="text-neutral-300">
+                          <span className="text-[#A1A1AA]">[{new Date(log.timestamp).toLocaleTimeString()}]</span> {log.action} - {log.details}
+                        </span>
+                        <span className="text-amber-400 font-bold shrink-0">{log.user || 'System'}</span>
                       </div>
                     ))
                   )}
@@ -814,38 +995,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* OTHER: THEME, ABOUT & NOTIFICATIONS */}
           {activeSection === 'other' && (
             <div className="space-y-6 animate-fade-in text-left">
-              <div className="border-b border-white/5 pb-3">
-                <h3 className="font-bold text-sm text-white uppercase tracking-wider">Theme, Notifications & About</h3>
-                <p className="text-[10px] text-[#A3A3A3] mt-0.5 uppercase tracking-wide">Rentflo architecture configurations</p>
+              <div className="border-b border-[#2C2C2E] pb-3">
+                <h3 className="font-bold text-base text-white">Theme & Preferences</h3>
+                <p className="text-xs text-[#A1A1AA] mt-0.5">Application appearance and automated messaging preferences</p>
               </div>
 
               {/* Users Details */}
-              <div className="p-4 bg-[#181818] rounded-2xl border border-white/5 space-y-2">
-                <span className="text-[9px] font-mono uppercase text-[#A3A3A3] tracking-widest block">User Identity Profile</span>
-                <p className="text-xs text-white font-bold">Role Privilege Level: Property Owner</p>
-                <p className="text-[10px] text-[#A3A3A3]">Full write permissions enabled on all IndexedDB tables. Cryptography key synchronized.</p>
+              <div className="p-4 bg-[#181818] rounded-2xl border border-[#2C2C2E] space-y-1.5">
+                <span className="text-xs font-semibold text-[#A1A1AA] block">User Identity Profile</span>
+                <p className="text-sm text-white font-bold">Role Privilege Level: Property Owner</p>
+                <p className="text-xs text-[#A1A1AA]">Full write permissions enabled on all IndexedDB tables. Cryptography key synchronized.</p>
               </div>
 
               {/* Theme & Brand Block */}
-              <div className="p-4 bg-[#181818] rounded-2xl border border-white/5 space-y-2">
-                <span className="text-[9px] font-mono uppercase text-[#A3A3A3] tracking-widest block">Locked Visual Theme Details</span>
-                <p className="text-xs text-white font-bold">Premium Cosmic Slate Theme (Active)</p>
-                <p className="text-[10px] text-[#A3A3A3] leading-relaxed">
+              <div className="p-4 bg-[#181818] rounded-2xl border border-[#2C2C2E] space-y-1.5">
+                <span className="text-xs font-semibold text-[#A1A1AA] block">Visual Theme Details</span>
+                <p className="text-sm text-white font-bold">Premium Cosmic Slate Theme (Active)</p>
+                <p className="text-xs text-[#A1A1AA] leading-relaxed">
                   Strictly conforms to monochrome high-contrast dark visual structures. Built on Apple HIG, Stripe, and Revolut Dashboard layout rules for low-cognitive strain during bookkeeping sessions.
                 </p>
               </div>
 
               {/* Notifications Status */}
-              <div className="p-4 bg-[#181818] rounded-2xl border border-white/5 space-y-2">
-                <span className="text-[9px] font-mono uppercase text-[#A3A3A3] tracking-widest block">Notification alert channels</span>
-                <p className="text-xs text-white font-bold">WhatsApp Reminder Engine: Active</p>
-                <p className="text-[10px] text-[#A3A3A3]">Automated text formatting templates with quick-action click targets for tenants.</p>
+              <div className="p-4 bg-[#181818] rounded-2xl border border-[#2C2C2E] space-y-1.5">
+                <span className="text-xs font-semibold text-[#A1A1AA] block">Notification Channels</span>
+                <p className="text-sm text-white font-bold">WhatsApp Reminder Engine: Active</p>
+                <p className="text-xs text-[#A1A1AA]">Automated text formatting templates with quick-action click targets for tenants.</p>
               </div>
 
               {/* About Block */}
-              <div className="p-4 bg-gradient-to-r from-white/[0.01] to-transparent rounded-2xl border border-white/5 text-center flex items-center justify-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-green-400" />
-                <span className="text-[9px] font-mono text-white font-bold uppercase tracking-widest">Rentflo SaaS Engine Secure Base v2.4.2</span>
+              <div className="p-4 bg-[#181818] rounded-2xl border border-[#2C2C2E] text-center flex items-center justify-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-mono text-white font-bold">Rentflo SaaS Engine Secure Base v2.4.2</span>
               </div>
             </div>
           )}
