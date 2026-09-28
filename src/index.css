@@ -10,6 +10,10 @@
 /* Base style resets & premium monochromatic Apple-inspired system variables */
 @layer base {
   :root {
+    /* Height of fixed navigation bar (approx 68px) + 24px safe padding buffer */
+    --bottom-nav-height: 68px;
+    --safe-bottom-clearance: calc(var(--bottom-nav-height) + 24px); /* ~92px total */
+
     /* Precise visual spec variables matching Apple-inspired ultra minimal premium dark theme */
     --bg-page: #050505; /* ultra-dark minimal background */
     --text-primary: #FFFFFF; /* crisp high contrast clean white */
@@ -90,6 +94,23 @@
 
   .neo-pill-btn-inactive {
     @apply text-[#A3A3A3] hover:text-white hover:bg-white/[0.04];
+  }
+
+  /* Global Layout Clearance Fix for Action Strips and Scrollable Containers */
+  .sticky-bottom-action-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--bottom-nav-height); /* Holds bar directly above the nav bar (~68px) */
+    z-index: 45;
+    padding: 12px 16px;
+    background-color: #121212;
+    border-top: 1px solid #2C2C2E;
+  }
+
+  .screen-scroll-container {
+    padding-bottom: var(--safe-bottom-clearance) !important;
+    box-sizing: border-box;
   }
 
   .card {

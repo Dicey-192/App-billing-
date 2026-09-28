@@ -1,4 +1,5 @@
 import { Tenant, Property } from '../types';
+import { getIdbItem, setIdbItem, deleteIdbItem, requestStoragePersistence } from './indexedDb';
 
 export class BackendDB {
   #data = new Map<string, string>();
@@ -11,6 +12,9 @@ export class BackendDB {
   }
 
   private init() {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return;
+    }
     // 1. Load primary from localStorage
     let newestPrimaryTimestamp = 0;
     const primaryDataMap = new Map<string, string>();
@@ -97,17 +101,9 @@ export class BackendDB {
 
   private async requestPersistence(): Promise<void> {
     try {
-      if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
-        const persisted = await navigator.storage.persisted();
-        if (!persisted) {
-          const granted = await navigator.storage.persist();
-          console.log(`[BackendDB] Requested Storage API persistence: granted=${granted}`);
-        } else {
-          console.log('[BackendDB] Storage API persistence already active.');
-        }
-      }
+      await requestStoragePersistence();
     } catch (e) {
-      console.warn('[BackendDB] Storage API persistence request failed:', e);
+      console.warn('[BackendDB] Storage persistence request failed:', e);
     }
   }
 
@@ -120,9 +116,11 @@ export class BackendDB {
       });
     };
 
-    // Listen to page unload and visibility changes to flush state
+    // Listen to page unload, mobile pagehide, freeze, and visibility changes to flush state
     window.addEventListener('beforeunload', handleFlush);
-    window.addEventListener('visibilitychange', () => {
+    window.addEventListener('pagehide', handleFlush);
+    window.addEventListener('freeze', handleFlush);
+    document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         handleFlush();
       }
@@ -130,6 +128,7 @@ export class BackendDB {
   }
 
   private saveEmergencyBackup(): void {
+    if (typeof localStorage === 'undefined') return;
     try {
       const backupData: Record<string, string> = {};
       for (const [k, v] of this.#data.entries()) {
@@ -146,6 +145,7 @@ export class BackendDB {
   }
 
   async flush(): Promise<boolean> {
+    if (typeof localStorage === 'undefined') return true;
     try {
       let allPassed = true;
       for (const [key, encoded] of this.#data.entries()) {
@@ -251,6 +251,11 @@ export class BackendDB {
       } else {
         this.saveEmergencyBackup();
       }
+
+      // Always write asynchronously to IndexedDB for persistent mobile storage
+      setIdbItem(key, envelope).catch(idbErr => {
+        console.warn(`[BackendDB] IndexedDB write fallback for ${key}:`, idbErr);
+      });
       
       // Guarantee durability on every write
       await this.flush();
@@ -265,6 +270,7 @@ export class BackendDB {
     
     // Trigger backup and sync update on deletes as well
     this.saveEmergencyBackup();
+    deleteIdbItem(key).catch(() => {});
     
     // Guarantee durability on delete
     await this.flush();

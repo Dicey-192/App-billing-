@@ -344,13 +344,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </p>
               </div>
               
-              {/* Element 2: Current Month KPI */}
-              <div className="flex items-center gap-3 bg-[#111111] border border-white/5 px-4 py-2.5 rounded-2xl self-start md:self-auto shrink-0">
-                <Calendar className="w-4 h-4 text-[#A3A3A3]" />
-                <div className="text-left">
-                  <p className="text-[9px] font-mono uppercase text-[#A3A3A3] leading-none">Current Billing Month</p>
-                  <p className="text-xs font-black text-white uppercase tracking-widest mt-1">{formatMonthStr(activeMonth)}</p>
+              {/* Element 2: Current Month KPI & Action Button */}
+              <div className="flex flex-wrap items-center gap-3 self-start md:self-auto shrink-0">
+                <div className="flex items-center gap-3 bg-[#111111] border border-white/5 px-4 py-2.5 rounded-2xl">
+                  <Calendar className="w-4 h-4 text-[#A3A3A3]" />
+                  <div className="text-left">
+                    <p className="text-[9px] font-mono uppercase text-[#A3A3A3] leading-none">Current Billing Month</p>
+                    <p className="text-xs font-black text-white uppercase tracking-widest mt-1">{formatMonthStr(activeMonth)}</p>
+                  </div>
                 </div>
+
+                <button
+                  onClick={() => setView('bulk-readings')}
+                  className="px-4 py-2.5 bg-[#76FF03] hover:bg-[#68e000] text-black font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <Zap className="w-4 h-4 fill-black" />
+                  <span>Enter Readings / Generate Bills</span>
+                </button>
               </div>
             </div>
 

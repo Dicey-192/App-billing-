@@ -72,6 +72,10 @@ app.post('/api/local-storage/save', async (req, res) => {
     const { data } = req.body;
     if (!data) return res.status(400).json({ error: 'Missing data payload' });
 
+    const now = Date.now();
+    data._timestamp = data._timestamp || now;
+    data._lastSavedAt = now;
+
     // 1. Write master app_db.json
     const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
     await fs.promises.writeFile(dbFilePath, JSON.stringify(data, null, 2));
@@ -110,7 +114,7 @@ app.post('/api/local-storage/save', async (req, res) => {
       }
     }
 
-    return res.json({ success: true, savedAt: Date.now() });
+    return res.json({ success: true, savedAt: now, timestamp: data._timestamp });
   } catch (err: any) {
     console.error('[Local Storage] Save error:', err);
     return res.status(500).json({ error: 'Failed to save to local folder', message: err.message });
@@ -124,7 +128,13 @@ app.get('/api/local-storage/load', async (req, res) => {
     const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
     if (fs.existsSync(dbFilePath)) {
       const content = await fs.promises.readFile(dbFilePath, 'utf-8');
-      return res.json({ success: true, data: JSON.parse(content) });
+      const parsed = JSON.parse(content);
+      const stat = fs.statSync(dbFilePath);
+      if (!parsed._timestamp && !parsed._lastSavedAt) {
+        parsed._timestamp = stat.mtimeMs;
+        parsed._lastSavedAt = stat.mtimeMs;
+      }
+      return res.json({ success: true, data: parsed, lastUpdated: stat.mtimeMs });
     }
     return res.json({ success: true, data: null });
   } catch (err: any) {

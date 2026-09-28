@@ -1378,6 +1378,21 @@ export default function App() {
   }, [tenants, properties]);
 
   // Month detection effect - strictly sets initial active month if empty; never auto-prompts on month change
+  const currentCalendarNepaliMonth = useMemo(() => {
+    try {
+      const nd = new NepaliDate();
+      return `BS-${nd.getYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
+    } catch {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+  }, []);
+
+  const isNewNepaliMonthDetected = useMemo(() => {
+    if (!data.activeMonth || properties.length === 0) return false;
+    return data.activeMonth !== currentCalendarNepaliMonth;
+  }, [data.activeMonth, currentCalendarNepaliMonth, properties.length]);
+
   useEffect(() => {
     if (properties.length === 0) return;
     
@@ -2115,6 +2130,38 @@ export default function App() {
           </div>
         </header>
 
+        {/* Step 0 Alert: New Month Detection */}
+        {isNewNepaliMonthDetected && currentView !== 'bulk-readings' && (
+          <div className="mb-6 bg-gradient-to-r from-amber-950/40 via-zinc-900 to-black border border-amber-500/40 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20 shrink-0">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 font-mono">
+                    New Month Detected
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 font-mono">
+                    {formatMonthStr(currentCalendarNepaliMonth)}
+                  </span>
+                </div>
+                <p className="text-sm font-bold text-white font-sans">
+                  You need to Roll Over to {formatMonthStr(currentCalendarNepaliMonth)} before entering new meter readings and generating bills.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => navigateTo('bulk-readings')}
+              className="w-full sm:w-auto px-5 py-2.5 bg-[#76FF03] hover:bg-[#68e000] text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <span>Start Month Rollover</span>
+              <ChevronRight className="w-4 h-4 stroke-[3]" />
+            </button>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           <motion.div
             key={currentView}
@@ -2189,9 +2236,10 @@ export default function App() {
               <BulkReadingsView
                 tenants={tenants}
                 properties={properties}
-                activeMonth={data.activeMonth || 'BS-2083-05'}
+                activeMonth={data.activeMonth || currentCalendarNepaliMonth}
                 onMonthChange={setActiveMonth}
                 onBack={handleGoBack}
+                onNavigateToTenants={() => navigateTo('tenants')}
                 onSave={(updates) => {
                   handleBatchSave(updates);
                 }}
@@ -2205,6 +2253,7 @@ export default function App() {
                 history={history}
                 downloadReceipt={downloadReceipt}
                 confirmAndGenerateBill={confirmAndGenerateBill}
+                currentUser={currentUser}
               />
             )}
             {currentView === 'payments' && (

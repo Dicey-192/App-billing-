@@ -108,5 +108,7 @@ export interface AppData {
   supportMasterOverrideMode?: boolean;
   subscriptionPlan?: SubscriptionPlan;
   calendarSystem?: 'AD' | 'BS';
+  _timestamp?: number;
+  _lastSavedAt?: number;
 }
 

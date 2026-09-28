@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AppData, Property, Tenant, BillHistoryEntry, HistoryTenantSnapshot, SubscriptionPlan } from '../types';
 import { db } from './db';
+import { getIdbItem, setIdbItem, requestStoragePersistence } from './indexedDb';
 
 const STORAGE_KEY = 'rentflo_billing_data';
 
@@ -97,24 +98,41 @@ export function normalizeAndValidateBackup(raw: any): AppData {
     calendarSystem: target.calendarSystem === 'BS' ? 'BS' : 'AD',
     activeMonth: target.activeMonth || '',
     subscriptionPlan: INITIAL_PLAN,
-    auditLogs: Array.isArray(target.auditLogs) ? target.auditLogs : []
+    auditLogs: Array.isArray(target.auditLogs) ? target.auditLogs : [],
+    _timestamp: target._timestamp || target._lastSavedAt || Date.now(),
+    _lastSavedAt: target._lastSavedAt || target._timestamp || Date.now()
   };
 }
 
-export function persistDataSynchronously(appData: AppData) {
+/**
+ * Triple-redundant, synchronous and asynchronous permanent storage.
+ * Saves immediately to localStorage (multiple keys), IndexedDB, BackendDB, and Server disk.
+ */
+export function persistEverywhere(appData: AppData): AppData {
+  const now = Date.now();
+  const stampedData: AppData = {
+    ...appData,
+    _timestamp: now,
+    _lastSavedAt: now,
+  };
+
+  // 1. Synchronous localStorage writes to all key variants
   try {
     const envelope = {
-      _timestamp: Date.now(),
-      payload: appData
+      _timestamp: now,
+      payload: stampedData
     };
     const stringified = JSON.stringify(envelope);
     localStorage.setItem('_nexum_db_' + STORAGE_KEY, stringified);
+    localStorage.setItem(STORAGE_KEY, stringified);
     localStorage.setItem('_nexum_db_rentflo_billing_data', stringified);
+    localStorage.setItem('rentflo_billing_data', stringified);
     localStorage.setItem('_nexum_db_artha_billing_data', stringified);
+    localStorage.setItem('artha_billing_data', stringified);
     
-    // Also save to EMERGENCY_BACKUP
+    // EMERGENCY_BACKUP
     const backupEnvelope = {
-      _timestamp: Date.now(),
+      _timestamp: now,
       data: {
         rentflo_billing_data: stringified,
         artha_billing_data: stringified
@@ -122,17 +140,35 @@ export function persistDataSynchronously(appData: AppData) {
     };
     localStorage.setItem('EMERGENCY_BACKUP', JSON.stringify(backupEnvelope));
   } catch (err) {
-    console.error('[useStorage] Synchronous localStorage write failed:', err);
+    console.error('[useStorage] Synchronous localStorage write error:', err);
   }
 
+  // 2. Persistent IndexedDB write
+  setIdbItem(STORAGE_KEY, stampedData).catch(err => {
+    console.warn('[useStorage] IndexedDB save error:', err);
+  });
+  setIdbItem('rentflo_billing_data', stampedData).catch(() => {});
+
+  // 3. BackendDB in-memory & fallback write
+  db.set(STORAGE_KEY, stampedData).catch(err => {
+    console.warn('[useStorage] BackendDB set error:', err);
+  });
+
+  // 4. Server disk sync non-blocking
   try {
     fetch('/api/local-storage/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: appData })
-    }).catch(() => {});
+      body: JSON.stringify({ data: stampedData })
+    }).catch(err => {
+      console.warn('[useStorage] Server disk save non-blocking warning:', err);
+    });
   } catch {}
+
+  return stampedData;
 }
+
+export const persistDataSynchronously = persistEverywhere;
 
 export function performRecalculation(prev: AppData): AppData {
   if (!prev) return INITIAL_DATA;
@@ -176,7 +212,7 @@ export function performRecalculation(prev: AppData): AppData {
       const defaultWaterCharges = waterUnits * (prop.waterRate || 0);
       const waterCharges = t.manualOverrides?.waterCharges !== undefined ? t.manualOverrides.waterCharges : defaultWaterCharges;
       
-      const defaultOtherFees = (t.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
+      const defaultOtherFees = (t.expenses || []).reduce((acc: number, exp: any) => acc + exp.amount, 0);
       const otherFees = t.manualOverrides?.otherFees !== undefined ? t.manualOverrides.otherFees : defaultOtherFees;
       
       const currentCharges = baseRent + electricityCharges + waterCharges + otherFees;
@@ -239,329 +275,369 @@ export function performRecalculation(prev: AppData): AppData {
   };
 }
 
-export function useStorage() {
-  const [data, setData] = useState<AppData>(() => {
+function loadDirectFromLocalStorage(): AppData | null {
+  const candidateKeys = [
+    '_nexum_db_' + STORAGE_KEY,
+    STORAGE_KEY,
+    '_nexum_db_rentflo_billing_data',
+    'rentflo_billing_data',
+    '_nexum_db_artha_billing_data',
+    'artha_billing_data',
+  ];
+
+  let bestData: AppData | null = null;
+  let bestTimestamp = 0;
+
+  for (const key of candidateKeys) {
     try {
-      let stored = localStorage.getItem('_nexum_db_' + STORAGE_KEY);
-      if (!stored) {
-        stored = localStorage.getItem('_nexum_db_artha_billing_data');
-      }
-      if (stored) {
-        let parsed: any = null;
+      const stored = localStorage.getItem(key);
+      if (!stored) continue;
+      
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(stored);
+      } catch {
         try {
-          parsed = JSON.parse(stored);
+          const decoded = decodeURIComponent(escape(atob(stored)));
+          parsed = JSON.parse(decoded);
         } catch {
-          let decodedJson: string;
-          try {
-            decodedJson = decodeURIComponent(escape(atob(stored)));
-          } catch {
-            decodedJson = atob(stored);
-          }
-          parsed = JSON.parse(decodedJson);
-        }
-        if (parsed) {
-          let saved: any = null;
-          if (typeof parsed === 'object' && 'payload' in parsed && '_timestamp' in parsed) {
-            saved = parsed.payload;
-          } else {
-            saved = parsed;
-          }
-          if (saved) {
-            saved.subscriptionPlan = INITIAL_PLAN;
-            return saved;
-          }
+          continue;
         }
       }
-    } catch (e) {
-      console.error('[useStorage] Direct localStorage load failed:', e);
-    }
 
-    // Emergency backup check
-    try {
-      const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
-      if (backupStr) {
-        const envelope = JSON.parse(backupStr);
-        if (envelope && envelope.data && (envelope.data[STORAGE_KEY] || envelope.data['artha_billing_data'])) {
-          const bVal = envelope.data[STORAGE_KEY] || envelope.data['artha_billing_data'];
-          let parsedRaw: any = null;
-          try {
-            parsedRaw = JSON.parse(bVal);
-          } catch {
-            let decodedJson: string;
-            try {
-              decodedJson = decodeURIComponent(escape(atob(bVal)));
-            } catch {
-              decodedJson = atob(bVal);
+      if (!parsed) continue;
+
+      let payload: any = parsed;
+      let ts = 0;
+      if (typeof parsed === 'object' && parsed !== null) {
+        if ('payload' in parsed) {
+          payload = parsed.payload;
+          ts = parsed._timestamp || 0;
+        } else if ('_timestamp' in parsed) {
+          ts = parsed._timestamp;
+        }
+      }
+
+      if (payload && (Array.isArray(payload.properties) || Array.isArray(payload.tenants))) {
+        const validated = normalizeAndValidateBackup(payload);
+        const itemTs = ts || validated._timestamp || validated._lastSavedAt || 0;
+        if (itemTs >= bestTimestamp) {
+          bestTimestamp = itemTs;
+          bestData = validated;
+        }
+      }
+    } catch {
+      // Ignore individual key parse error
+    }
+  }
+
+  // Check emergency backup as well
+  try {
+    const backupStr = localStorage.getItem('EMERGENCY_BACKUP');
+    if (backupStr) {
+      const envelope = JSON.parse(backupStr);
+      if (envelope && envelope.data) {
+        const bVal = envelope.data[STORAGE_KEY] || envelope.data['rentflo_billing_data'] || envelope.data['artha_billing_data'];
+        if (bVal) {
+          let parsedInner = typeof bVal === 'string' ? JSON.parse(bVal) : bVal;
+          if (parsedInner && parsedInner.payload) parsedInner = parsedInner.payload;
+          if (parsedInner && (Array.isArray(parsedInner.properties) || Array.isArray(parsedInner.tenants))) {
+            const validated = normalizeAndValidateBackup(parsedInner);
+            const itemTs = envelope._timestamp || validated._timestamp || 0;
+            if (itemTs > bestTimestamp) {
+              bestTimestamp = itemTs;
+              bestData = validated;
             }
-            parsedRaw = JSON.parse(decodedJson);
-          }
-          const saved = (parsedRaw && typeof parsedRaw === 'object' && 'payload' in parsedRaw) ? parsedRaw.payload : parsedRaw;
-          if (saved) {
-            saved.subscriptionPlan = INITIAL_PLAN;
-            return saved;
           }
         }
       }
-    } catch (fallbackErr) {
-      console.error('[useStorage] Emergency backup load failed:', fallbackErr);
     }
+  } catch {}
 
+  if (bestData) {
+    return performRecalculation(bestData);
+  }
+  return null;
+}
+
+export function useStorage() {
+  // 1. Initial State: Load immediately & synchronously from localStorage on first frame
+  const [data, setData] = useState<AppData>(() => {
+    const direct = loadDirectFromLocalStorage();
+    if (direct) {
+      return direct;
+    }
     return INITIAL_DATA;
   });
+
+  const latestDataRef = useRef<AppData>(data);
+  latestDataRef.current = data;
 
   const [isLoading, setIsLoading] = useState(false);
   const [quotaUsage, setQuotaUsage] = useState(0);
   const [dataStats, setDataStats] = useState({ properties: 0, tenants: 0, history: 0 });
 
-  // On mount: fetch disk-backed storage from /api/local-storage/load if available
+  // Central commit pipeline: ensures EVERY mutation is saved immediately to all storage layers
+  const commitData = useCallback((nextData: AppData): AppData => {
+    const recalculated = performRecalculation(nextData);
+    const persisted = persistEverywhere(recalculated);
+    latestDataRef.current = persisted;
+    setData(persisted);
+    return persisted;
+  }, []);
+
+  // On mount: check IndexedDB, request persistent storage, sync with server
   useEffect(() => {
     setIsLoading(false);
+    requestStoragePersistence();
+
+    // 1. Check IndexedDB
+    getIdbItem<AppData>(STORAGE_KEY).then(idbData => {
+      if (idbData && (idbData.properties?.length || idbData.tenants?.length)) {
+        const idbNormalized = normalizeAndValidateBackup(idbData);
+        const idbTs = idbNormalized._timestamp || idbNormalized._lastSavedAt || 0;
+        const currentTs = latestDataRef.current._timestamp || latestDataRef.current._lastSavedAt || 0;
+        if (idbTs > currentTs || latestDataRef.current.properties.length === 0) {
+          console.log('[useStorage] Hydrated richer data from persistent IndexedDB');
+          commitData(idbNormalized);
+        }
+      }
+    }).catch(err => {
+      console.warn('[useStorage] IndexedDB mount check fallback:', err);
+    });
+
+    // 2. Check Server Local Storage Folder
     fetch('/api/local-storage/load')
       .then(res => res.json())
       .then(payload => {
         if (payload?.success && payload?.data) {
           const diskData = normalizeAndValidateBackup(payload.data);
-          setData(current => {
-            const currentCount = (current.properties?.length || 0) + (current.tenants?.length || 0) + (current.history?.length || 0);
-            const diskCount = (diskData.properties?.length || 0) + (diskData.tenants?.length || 0) + (diskData.history?.length || 0);
-            if (diskCount > currentCount || current.properties.length === 0) {
-              console.log('[useStorage] Hydrating richer persistent data from local private disk storage:', diskCount, 'vs', currentCount);
-              const recalculated = performRecalculation(diskData);
-              persistDataSynchronously(recalculated);
-              return recalculated;
-            }
-            return current;
-          });
+          const serverTs = diskData._timestamp || diskData._lastSavedAt || payload.lastUpdated || 0;
+          const current = latestDataRef.current;
+          const currentTs = current._timestamp || current._lastSavedAt || 0;
+          const hasLocal = current.properties.length > 0 || current.tenants.length > 0;
+
+          // If local device data is newer or has modifications since server last updated:
+          if (hasLocal && currentTs >= serverTs) {
+            console.log('[useStorage] Device local storage is newer than server disk, updating server disk.');
+            fetch('/api/local-storage/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: current })
+            }).catch(() => {});
+          } else if (serverTs > currentTs && currentTs > 0) {
+            console.log('[useStorage] Server disk has newer data, updating device.');
+            commitData(diskData);
+          } else if (!hasLocal && (diskData.properties.length > 0 || diskData.tenants.length > 0)) {
+            console.log('[useStorage] Device local storage is empty, bootstrapping from server disk.');
+            commitData(diskData);
+          }
         }
       })
       .catch(err => {
         console.warn('[useStorage] Initial local folder load fallback:', err);
       });
-  }, []);
 
-  // Save data to BackendDB & Local App Folder when changes occur
+    // 3. Register mobile and browser flush listeners
+    const handleImmediateFlush = () => {
+      if (latestDataRef.current) {
+        persistEverywhere(latestDataRef.current);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleImmediateFlush);
+    window.addEventListener('pagehide', handleImmediateFlush);
+    window.addEventListener('freeze', handleImmediateFlush);
+    const handleVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleImmediateFlush();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleImmediateFlush);
+      window.removeEventListener('pagehide', handleImmediateFlush);
+      window.removeEventListener('freeze', handleImmediateFlush);
+      document.removeEventListener('visibilitychange', handleVisChange);
+    };
+  }, [commitData]);
+
+  // Compute stats on data changes
   useEffect(() => {
-    if (isLoading) return;
-
-    db.set(STORAGE_KEY, data).catch(e => {
-      console.error('Failed to save data to BackendDB', e);
-    });
-
-    // Write to local private app folder (.rentflo_data)
-    fetch('/api/local-storage/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data })
-    }).catch(err => {
-      console.warn('Sync to local app folder non-blocking fallback:', err);
-    });
-    
     const stringified = JSON.stringify(data);
-    
-    // Detailed Stats
     const stats = {
       properties: new Blob([JSON.stringify(data.properties || [])]).size,
       tenants: new Blob([JSON.stringify(data.tenants || [])]).size,
       history: new Blob([JSON.stringify(data.history || [])]).size,
     };
     setDataStats(stats);
-
     const sizeInBytes = new Blob([stringified]).size;
-    setQuotaUsage((sizeInBytes / (8 * 1024 * 1024)) * 100); // 8MB Quota Protection limit!
-  }, [data, isLoading]);
+    setQuotaUsage((sizeInBytes / (8 * 1024 * 1024)) * 100);
+  }, [data]);
 
+  // Mutation Actions - All write immediately to permanent storage!
   const addProperty = useCallback((property: Property) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        properties: [...prev.properties, property],
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      properties: [...latestDataRef.current.properties, property],
     });
-  }, []);
+  }, [commitData]);
 
   const updateProperty = useCallback((id: string, property: Partial<Property>) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        properties: prev.properties.map(p => p.id === id ? { ...p, ...property, updatedAt: Date.now() } : p),
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      properties: latestDataRef.current.properties.map(p => p.id === id ? { ...p, ...property, updatedAt: Date.now() } : p),
     });
-  }, []);
+  }, [commitData]);
 
   const deleteProperty = useCallback((id: string) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        properties: prev.properties.filter(p => p.id !== id),
-        tenants: prev.tenants.filter(t => t.propertyId !== id),
-        history: prev.history.filter(h => h.propertyId !== id),
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      properties: latestDataRef.current.properties.filter(p => p.id !== id),
+      tenants: latestDataRef.current.tenants.filter(t => t.propertyId !== id),
+      history: latestDataRef.current.history.filter(h => h.propertyId !== id),
     });
-  }, []);
+  }, [commitData]);
 
   const addTenant = useCallback((tenant: Tenant) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        tenants: [...prev.tenants, tenant],
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      tenants: [...latestDataRef.current.tenants, tenant],
     });
-  }, []);
+  }, [commitData]);
 
   const updateTenant = useCallback((id: string, tenant: Partial<Tenant>) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        tenants: prev.tenants.map(t => t.id === id ? { ...t, ...tenant, updatedAt: Date.now() } : t),
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      tenants: latestDataRef.current.tenants.map(t => t.id === id ? { ...t, ...tenant, updatedAt: Date.now() } : t),
     });
-  }, []);
+  }, [commitData]);
 
   const updateTenants = useCallback((updates: { id: string; updates: Partial<Tenant> }[]) => {
-    setData(prev => {
-      const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
-      const next = {
-        ...prev,
-        tenants: prev.tenants.map(t => {
-          const u = tenantMap.get(t.id);
-          return u ? { ...t, ...u, updatedAt: Date.now() } : t;
-        }),
-      };
-      return performRecalculation(next);
+    const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
+    commitData({
+      ...latestDataRef.current,
+      tenants: latestDataRef.current.tenants.map(t => {
+        const u = tenantMap.get(t.id);
+        return u ? { ...t, ...u, updatedAt: Date.now() } : t;
+      }),
     });
-  }, []);
+  }, [commitData]);
 
   const deleteTenant = useCallback((id: string) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        tenants: prev.tenants.filter(t => t.id !== id),
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      tenants: latestDataRef.current.tenants.filter(t => t.id !== id),
     });
-  }, []);
+  }, [commitData]);
 
   const addHistory = useCallback((entry: BillHistoryEntry) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        history: [entry, ...prev.history],
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      history: [entry, ...latestDataRef.current.history],
     });
-  }, []);
+  }, [commitData]);
 
   const addManyHistory = useCallback((entries: BillHistoryEntry[]) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        history: [...entries, ...prev.history],
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      history: [...entries, ...latestDataRef.current.history],
     });
-  }, []);
+  }, [commitData]);
 
   const rollover = useCallback((month: string, historyEntries: BillHistoryEntry[], updates: { id: string; updates: Partial<Tenant> }[]) => {
-    setData(prev => {
-      const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
-      const next = {
-        ...prev,
-        activeMonth: month,
-        dismissedMonth: undefined,
-        history: [...historyEntries, ...(prev.history || [])],
-        tenants: prev.tenants.map(t => {
-          const u = tenantMap.get(t.id);
-          return u ? { ...t, ...u, updatedAt: Date.now() } : t;
-        }),
-      };
-      return performRecalculation(next);
+    const tenantMap = new Map(updates.map(u => [u.id, u.updates]));
+    commitData({
+      ...latestDataRef.current,
+      activeMonth: month,
+      dismissedMonth: undefined,
+      history: [...historyEntries, ...(latestDataRef.current.history || [])],
+      tenants: latestDataRef.current.tenants.map(t => {
+        const u = tenantMap.get(t.id);
+        return u ? { ...t, ...u, updatedAt: Date.now() } : t;
+      }),
     });
-  }, []);
+  }, [commitData]);
 
   const setActiveMonth = useCallback((month: string) => {
-    setData(prev => ({ ...prev, activeMonth: month, dismissedMonth: undefined }));
-  }, []);
+    commitData({
+      ...latestDataRef.current,
+      activeMonth: month,
+      dismissedMonth: undefined
+    });
+  }, [commitData]);
 
   const dismissRollover = useCallback((month: string) => {
-    setData(prev => ({ ...prev, dismissedMonth: month }));
-  }, []);
+    commitData({
+      ...latestDataRef.current,
+      dismissedMonth: month
+    });
+  }, [commitData]);
 
   const recalculateBalances = useCallback(() => {
-    setData(prev => performRecalculation(prev));
-  }, []);
+    commitData({ ...latestDataRef.current });
+  }, [commitData]);
 
   const updateHistoryTenant = useCallback((entryId: string, tenantId: string, updates: Partial<any>) => {
-    setData(prev => {
-      const next = {
-        ...prev,
-        history: prev.history.map(h => {
-          if (h.id !== entryId) return h;
-          return {
-            ...h,
-            snapshot: {
-              ...h.snapshot,
-              tenants: h.snapshot.tenants.map(t => {
-                if (t.id !== tenantId) return t;
-                return { ...t, ...updates };
-              })
-            }
-          };
-        })
-      };
-      return performRecalculation(next);
+    commitData({
+      ...latestDataRef.current,
+      history: latestDataRef.current.history.map(h => {
+        if (h.id !== entryId) return h;
+        return {
+          ...h,
+          snapshot: {
+            ...h.snapshot,
+            tenants: h.snapshot.tenants.map(t => {
+              if (t.id !== tenantId) return t;
+              return { ...t, ...updates };
+            })
+          }
+        };
+      })
     });
-  }, []);
+  }, [commitData]);
 
   const addAuditLog = useCallback((tenantId: string, tenantName: string, month: string, fieldName: string, oldValue: string, newValue: string) => {
-    setData(prev => {
-      const logs = prev.auditLogs || [];
-      const newEntry = {
-        id: crypto.randomUUID(),
-        tenantId,
-        tenantName,
-        month,
-        timestamp: Date.now(),
-        fieldName,
-        oldValue: String(oldValue),
-        newValue: String(newValue)
-      };
-      return {
-        ...prev,
-        auditLogs: [newEntry, ...logs]
-      };
+    const logs = latestDataRef.current.auditLogs || [];
+    const newEntry = {
+      id: crypto.randomUUID(),
+      tenantId,
+      tenantName,
+      month,
+      timestamp: Date.now(),
+      fieldName,
+      oldValue: String(oldValue),
+      newValue: String(newValue)
+    };
+    commitData({
+      ...latestDataRef.current,
+      auditLogs: [newEntry, ...logs]
     });
-  }, []);
+  }, [commitData]);
 
   const toggleSupportMasterMode = useCallback(() => {
-    setData(prev => ({
-      ...prev,
-      supportMasterOverrideMode: !prev.supportMasterOverrideMode
-    }));
-  }, []);
+    commitData({
+      ...latestDataRef.current,
+      supportMasterOverrideMode: !latestDataRef.current.supportMasterOverrideMode
+    });
+  }, [commitData]);
 
   const clearAuditLogs = useCallback(() => {
-    setData(prev => ({
-      ...prev,
+    commitData({
+      ...latestDataRef.current,
       auditLogs: []
-    }));
-  }, []);
+    });
+  }, [commitData]);
 
   const cleanOldHistory = useCallback((monthsToKeep: number = 12) => {
-    setData(prev => {
-      const now = Date.now();
-      const cutoff = now - (monthsToKeep * 30 * 24 * 60 * 60 * 1000);
-      const next = {
-        ...prev,
-        history: prev.history.filter(h => h.createdAt > cutoff),
-      };
-      return performRecalculation(next);
+    const now = Date.now();
+    const cutoff = now - (monthsToKeep * 30 * 24 * 60 * 60 * 1000);
+    commitData({
+      ...latestDataRef.current,
+      history: latestDataRef.current.history.filter(h => h.createdAt > cutoff),
     });
-  }, []);
+  }, [commitData]);
 
   const confirmAndGenerateBill = useCallback((
     tenantId: string,
@@ -577,120 +653,110 @@ export function useStorage() {
       totalDue: number;
     }
   ) => {
-    let savedResult: { tenant: Tenant; historyEntry: BillHistoryEntry } | null = null;
+    const current = latestDataRef.current;
+    const currentTenant = current.tenants.find(t => t.id === tenantId);
+    if (!currentTenant) return null;
 
-    setData(prev => {
-      const currentTenant = prev.tenants.find(t => t.id === tenantId);
-      if (!currentTenant) return prev;
+    const prop = current.properties.find(p => p.id === currentTenant.propertyId);
 
-      const prop = prev.properties.find(p => p.id === currentTenant.propertyId);
-
-      const updatedTenant: Tenant = {
-        ...currentTenant,
-        currElecReading: finalElec,
-        currWaterReading: finalWater,
-        previousDues: calculations.openingBalance,
-        isPaid: false,
+    const updatedTenant: Tenant = {
+      ...currentTenant,
+      currElecReading: finalElec,
+      currWaterReading: finalWater,
+      previousDues: calculations.openingBalance,
+      isPaid: false,
+      paidAmount: 0,
+      manualOverrides: {
+        baseRent: calculations.baseRent,
+        electricityCharges: calculations.electricityCharges,
+        waterCharges: calculations.waterCharges,
+        otherFees: calculations.otherFees,
+        openingBalance: calculations.openingBalance,
+        totalDue: calculations.totalDue,
         paidAmount: 0,
-        manualOverrides: {
-          baseRent: calculations.baseRent,
-          electricityCharges: calculations.electricityCharges,
-          waterCharges: calculations.waterCharges,
-          otherFees: calculations.otherFees,
-          openingBalance: calculations.openingBalance,
-          totalDue: calculations.totalDue,
-          paidAmount: 0,
-          isPaid: false
+        isPaid: false
+      },
+      updatedAt: Date.now()
+    };
+
+    const snapshotTenant: HistoryTenantSnapshot = {
+      ...updatedTenant
+    };
+
+    const historyEntry: BillHistoryEntry = {
+      id: `bill_${tenantId}_${period}_${Date.now()}`,
+      propertyId: updatedTenant.propertyId,
+      month: period,
+      snapshot: {
+        property: prop || {
+          id: updatedTenant.propertyId,
+          name: 'Property',
+          address: '',
+          electricRate: 0,
+          waterRate: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          defaultExpenses: []
         },
-        updatedAt: Date.now()
-      };
+        tenants: [snapshotTenant]
+      },
+      createdAt: Date.now()
+    };
 
-      const snapshotTenant: HistoryTenantSnapshot = {
-        ...updatedTenant
-      };
-
-      const historyEntry: BillHistoryEntry = {
-        id: `bill_${tenantId}_${period}_${Date.now()}`,
-        propertyId: updatedTenant.propertyId,
-        month: period,
-        snapshot: {
-          property: prop || {
-            id: updatedTenant.propertyId,
-            name: 'Property',
-            address: '',
-            electricRate: 0,
-            waterRate: 0,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            defaultExpenses: []
-          },
-          tenants: [snapshotTenant]
-        },
-        createdAt: Date.now()
-      };
-
-      savedResult = { tenant: updatedTenant, historyEntry };
-
-      // Prepend the new bill, replacing any prior bill for this tenant & month
-      const filteredHistory = prev.history.filter(h => {
-        if (h.month !== period) return true;
-        if (h.id.includes(tenantId)) return false;
-        if (Array.isArray(h.snapshot?.tenants) && h.snapshot.tenants.some(st => st.id === tenantId)) return false;
-        return true;
-      });
-
-      const next: AppData = {
-        ...prev,
-        tenants: prev.tenants.map(t => t.id === tenantId ? updatedTenant : t),
-        history: [historyEntry, ...filteredHistory]
-      };
-
-      const recalculated = performRecalculation(next);
-      persistDataSynchronously(recalculated);
-      return recalculated;
+    const filteredHistory = current.history.filter(h => {
+      if (h.month !== period) return true;
+      if (h.id.includes(tenantId)) return false;
+      if (Array.isArray(h.snapshot?.tenants) && h.snapshot.tenants.some(st => st.id === tenantId)) return false;
+      return true;
     });
 
-    return savedResult;
-  }, []);
+    const next: AppData = {
+      ...current,
+      tenants: current.tenants.map(t => t.id === tenantId ? updatedTenant : t),
+      history: [historyEntry, ...filteredHistory]
+    };
+
+    commitData(next);
+
+    return { tenant: updatedTenant, historyEntry };
+  }, [commitData]);
 
   const restoreData = useCallback(async (newData: any) => {
     try {
       const normalized = normalizeAndValidateBackup(newData);
-      const next = {
+      const next: AppData = {
         ...normalized,
         lastBackupAt: Date.now(),
         subscriptionPlan: INITIAL_PLAN
       };
-      const recalculated = performRecalculation(next);
-      persistDataSynchronously(recalculated);
-
-      try {
-        await db.set(STORAGE_KEY, recalculated);
-      } catch (e) {
-        console.error('[useStorage] Immediate restore save failed:', e);
-      }
-
-      setData(recalculated);
+      commitData(next);
       return true;
     } catch (err) {
       console.error('[useStorage] restoreData failed:', err);
       return false;
     }
-  }, []);
+  }, [commitData]);
 
   const setSubscriptionPlan = useCallback((plan: SubscriptionPlan) => {
-    setData(prev => ({
-      ...prev,
+    commitData({
+      ...latestDataRef.current,
       subscriptionPlan: plan
-    }));
-  }, []);
+    });
+  }, [commitData]);
 
   const setCalendarSystem = useCallback((calendarSystem: 'AD' | 'BS') => {
-    setData(prev => ({
-      ...prev,
+    commitData({
+      ...latestDataRef.current,
       calendarSystem
-    }));
-  }, []);
+    });
+  }, [commitData]);
+
+  const setDirectData = useCallback((action: React.SetStateAction<AppData>) => {
+    setData(prev => {
+      const next = typeof action === 'function' ? (action as (p: AppData) => AppData)(prev) : action;
+      return commitData(next);
+    });
+  }, [commitData]);
 
   return useMemo(() => ({
     data,
@@ -723,9 +789,9 @@ export function useStorage() {
     addAuditLog,
     toggleSupportMasterMode,
     clearAuditLogs,
-    setData,
+    setData: setDirectData,
     confirmAndGenerateBill,
     setSubscriptionPlan,
     setCalendarSystem,
-  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, confirmAndGenerateBill, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan, setCalendarSystem]);
+  }), [data, isLoading, quotaUsage, dataStats, addProperty, updateProperty, deleteProperty, addTenant, updateTenant, updateTenants, deleteTenant, addHistory, addManyHistory, rollover, setActiveMonth, dismissRollover, updateHistoryTenant, cleanOldHistory, confirmAndGenerateBill, restoreData, recalculateBalances, addAuditLog, toggleSupportMasterMode, clearAuditLogs, setSubscriptionPlan, setCalendarSystem, setDirectData]);
 }
