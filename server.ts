@@ -65,20 +65,53 @@ app.get('/api/local-storage/status', async (req, res) => {
   }
 });
 
-// Save Data directly into Local Private App Folder
+// Save Data directly into Local Private App Folder with Overwrite Protection & Atomic Write
 app.post('/api/local-storage/save', async (req, res) => {
   try {
     initLocalPrivateFolder();
-    const { data } = req.body;
+    const { data, forceOverwriteEmpty } = req.body;
     if (!data) return res.status(400).json({ error: 'Missing data payload' });
 
     const now = Date.now();
     data._timestamp = data._timestamp || now;
     data._lastSavedAt = now;
 
-    // 1. Write master app_db.json
     const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
-    await fs.promises.writeFile(dbFilePath, JSON.stringify(data, null, 2));
+    const backupDbFilePath = path.join(LOCAL_APP_DIR, 'app_db_backup.json');
+    const tmpFilePath = path.join(LOCAL_APP_DIR, `app_db_${Date.now()}_${Math.random().toString(36).substring(7)}.tmp`);
+
+    const incomingProps = Array.isArray(data.properties) ? data.properties.length : 0;
+    const incomingTenants = Array.isArray(data.tenants) ? data.tenants.length : 0;
+
+    // Order 4: Overwrite Protection - Never replace real saved data with empty data
+    if (fs.existsSync(dbFilePath)) {
+      try {
+        const existingRaw = await fs.promises.readFile(dbFilePath, 'utf-8');
+        const existingData = JSON.parse(existingRaw);
+        const existingProps = Array.isArray(existingData.properties) ? existingData.properties.length : 0;
+        const existingTenants = Array.isArray(existingData.tenants) ? existingData.tenants.length : 0;
+
+        if ((existingProps > 0 || existingTenants > 0) && (incomingProps === 0 && incomingTenants === 0) && !forceOverwriteEmpty) {
+          console.warn('[Local Storage] OVERWRITE PROTECTED: Rejected empty payload from overwriting existing database with', existingProps, 'properties and', existingTenants, 'tenants.');
+          return res.status(200).json({ 
+            success: false, 
+            preventedOverwrite: true, 
+            message: 'Existing data preserved. Empty payload was rejected.' 
+          });
+        }
+
+        // Keep rolling backup of the good existing file
+        if (existingProps > 0 || existingTenants > 0) {
+          await fs.promises.writeFile(backupDbFilePath, existingRaw);
+        }
+      } catch (checkErr) {
+        console.warn('[Local Storage] Check existing file error:', checkErr);
+      }
+    }
+
+    // Atomic write to prevent partial/truncated files
+    await fs.promises.writeFile(tmpFilePath, JSON.stringify(data, null, 2));
+    await fs.promises.rename(tmpFilePath, dbFilePath);
 
     // 2. Write itemized files into subfolders for fast indexing & memory-efficient reads
     if (Array.isArray(data.tenants)) {
@@ -121,21 +154,86 @@ app.post('/api/local-storage/save', async (req, res) => {
   }
 });
 
-// Load Data directly from Local Private App Folder
+// Load Data directly from Local Private App Folder with Automatic Recovery
 app.get('/api/local-storage/load', async (req, res) => {
   try {
     initLocalPrivateFolder();
     const dbFilePath = path.join(LOCAL_APP_DIR, 'app_db.json');
+    const backupDbFilePath = path.join(LOCAL_APP_DIR, 'app_db_backup.json');
+
+    let parsed: any = null;
+    let statMtime = Date.now();
+
     if (fs.existsSync(dbFilePath)) {
       const content = await fs.promises.readFile(dbFilePath, 'utf-8');
-      const parsed = JSON.parse(content);
-      const stat = fs.statSync(dbFilePath);
-      if (!parsed._timestamp && !parsed._lastSavedAt) {
-        parsed._timestamp = stat.mtimeMs;
-        parsed._lastSavedAt = stat.mtimeMs;
+      try {
+        parsed = JSON.parse(content);
+        const stat = fs.statSync(dbFilePath);
+        statMtime = stat.mtimeMs;
+      } catch (e) {
+        console.warn('[Local Storage] Corrupt app_db.json encountered during load:', e);
       }
-      return res.json({ success: true, data: parsed, lastUpdated: stat.mtimeMs });
     }
+
+    const hasData = parsed && ((parsed.properties?.length || 0) > 0 || (parsed.tenants?.length || 0) > 0);
+
+    // If master db file is empty or missing, recover from backup file or itemized records
+    if (!hasData) {
+      if (fs.existsSync(backupDbFilePath)) {
+        try {
+          const bContent = await fs.promises.readFile(backupDbFilePath, 'utf-8');
+          const bParsed = JSON.parse(bContent);
+          if ((bParsed.properties?.length || 0) > 0 || (bParsed.tenants?.length || 0) > 0) {
+            console.log('[Local Storage] Recovered data from app_db_backup.json');
+            parsed = bParsed;
+            await fs.promises.writeFile(dbFilePath, JSON.stringify(parsed, null, 2));
+          }
+        } catch {}
+      }
+
+      // Check itemized tenant and property folders
+      if (!parsed || ((parsed.properties?.length || 0) === 0 && (parsed.tenants?.length || 0) === 0)) {
+        try {
+          const propDir = path.join(LOCAL_APP_DIR, 'properties');
+          const tenantDir = path.join(LOCAL_APP_DIR, 'tenants');
+          const paymentsDir = path.join(LOCAL_APP_DIR, 'payments');
+
+          const propFiles = fs.existsSync(propDir) ? fs.readdirSync(propDir).filter(f => f.endsWith('.json')) : [];
+          const tenantFiles = fs.existsSync(tenantDir) ? fs.readdirSync(tenantDir).filter(f => f.endsWith('.json')) : [];
+          const paymentFiles = fs.existsSync(paymentsDir) ? fs.readdirSync(paymentsDir).filter(f => f.endsWith('.json')) : [];
+
+          if (propFiles.length > 0 || tenantFiles.length > 0) {
+            const recoveredProps = propFiles.map(f => JSON.parse(fs.readFileSync(path.join(propDir, f), 'utf-8')));
+            const recoveredTenants = tenantFiles.map(f => JSON.parse(fs.readFileSync(path.join(tenantDir, f), 'utf-8')));
+            const recoveredPayments = paymentFiles.map(f => JSON.parse(fs.readFileSync(path.join(paymentsDir, f), 'utf-8')));
+
+            parsed = {
+              properties: recoveredProps,
+              tenants: recoveredTenants,
+              history: recoveredPayments,
+              activeMonth: parsed?.activeMonth || '',
+              calendarSystem: parsed?.calendarSystem || 'AD',
+              _timestamp: Date.now(),
+              _lastSavedAt: Date.now()
+            };
+
+            await fs.promises.writeFile(dbFilePath, JSON.stringify(parsed, null, 2));
+            console.log(`[Local Storage] Assembled and recovered ${recoveredTenants.length} tenants and ${recoveredProps.length} properties from disk subfolders.`);
+          }
+        } catch (itemizedErr) {
+          console.warn('[Local Storage] Subfolder recovery error:', itemizedErr);
+        }
+      }
+    }
+
+    if (parsed) {
+      if (!parsed._timestamp && !parsed._lastSavedAt) {
+        parsed._timestamp = statMtime;
+        parsed._lastSavedAt = statMtime;
+      }
+      return res.json({ success: true, data: parsed, lastUpdated: statMtime });
+    }
+
     return res.json({ success: true, data: null });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to load local folder data', message: err.message });

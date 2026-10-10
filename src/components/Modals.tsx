@@ -412,6 +412,7 @@ export const TenantModal: React.FC<{
     roomNumber: '',
     rent: 0,
     previousDues: 0,
+    advancePayment: 0,
     prevElecReading: 0,
     currElecReading: 0,
     prevWaterReading: 0,
@@ -449,6 +450,7 @@ export const TenantModal: React.FC<{
       roomNumber: formData.roomNumber || '',
       rent: Number(formData.rent) || 0,
       previousDues: Number(formData.previousDues) || 0,
+      advancePayment: Number(formData.advancePayment) || 0,
       prevElecReading: Number(formData.prevElecReading) || 0,
       currElecReading: Number(formData.currElecReading) || 0,
       prevWaterReading: Number(formData.prevWaterReading) || 0,
@@ -480,6 +482,16 @@ export const TenantModal: React.FC<{
           <div className="col-span-2">
             <label className="label">Fixed Rent</label>
             <input type="number" className="input bg-slate-900/50" value={formData.rent} onChange={e => setFormData({ ...formData, rent: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label">Opening Arrears (Previous Dues)</label>
+            <input type="number" placeholder="0" className="input bg-slate-900/50 font-mono" value={formData.previousDues ?? 0} onChange={e => setFormData({ ...formData, previousDues: Number(e.target.value) })} />
+            <p className="text-[10px] text-amber-400 mt-1">Added to bill as money owed</p>
+          </div>
+          <div>
+            <label className="label">Advance / Prepaid Amount</label>
+            <input type="number" placeholder="0" className="input bg-slate-900/50 font-mono" value={formData.advancePayment ?? 0} onChange={e => setFormData({ ...formData, advancePayment: Number(e.target.value) })} />
+            <p className="text-[10px] text-emerald-400 mt-1">Subtracted from bill as prepaid credit</p>
           </div>
         </div>
 
@@ -572,10 +584,19 @@ export const BatchReadingModal: React.FC<{
   }, [tenants]);
 
   const handleUpdate = (id: string, field: 'currElec' | 'currWater', value: number) => {
-    setReadings(prev => ({
-      ...prev,
-      [id]: { ...prev[id], [field]: value }
-    }));
+    const cleanVal = isNaN(value) ? 0 : value;
+    setReadings(prev => {
+      const next = {
+        ...prev,
+        [id]: { ...prev[id], [field]: cleanVal }
+      };
+      // Order 2: Save immediately to permanent storage without waiting for submit
+      const tenant = tenants.find(t => t.id === id);
+      const currElec = field === 'currElec' ? cleanVal : (next[id]?.currElec ?? tenant?.currElecReading ?? 0);
+      const currWater = field === 'currWater' ? cleanVal : (next[id]?.currWater ?? tenant?.currWaterReading ?? 0);
+      onSave([{ id, currElec, currWater }]);
+      return next;
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -933,11 +954,20 @@ export const BulkTableModal: React.FC<{
 
   const handleUpdate = (id: string, field: 'currElec' | 'currWater', value: number) => {
     const cleanVal = isNaN(value) ? 0 : value;
-    setReadings(prev => ({ ...prev, [id]: { ...prev[id], [field]: cleanVal } }));
+    setReadings(prev => {
+      const next = { ...prev, [id]: { ...prev[id], [field]: cleanVal } };
+      // Order 2: Save immediately to permanent storage without waiting for submit
+      const tenant = tenants.find(t => t.id === id);
+      const currElec = field === 'currElec' ? cleanVal : (next[id]?.currElec ?? tenant?.currElecReading ?? 0);
+      const currWater = field === 'currWater' ? cleanVal : (next[id]?.currWater ?? tenant?.currWaterReading ?? 0);
+      onSave([{ id, currElec, currWater }]);
+      return next;
+    });
   };
 
   const handleQuickFill = (type: 'zero' | 'add5_elec' | 'add1_water') => {
     const next = { ...readings };
+    const updates: { id: string, currElec: number, currWater: number }[] = [];
     tenants.forEach(t => {
       if (type === 'zero') {
         next[t.id] = { currElec: t.prevElecReading, currWater: t.prevWaterReading };
@@ -946,8 +976,14 @@ export const BulkTableModal: React.FC<{
       } else if (type === 'add1_water') {
         next[t.id] = { ...next[t.id], currWater: (next[t.id]?.currWater || t.prevWaterReading) + 1 };
       }
+      updates.push({
+        id: t.id,
+        currElec: next[t.id].currElec,
+        currWater: next[t.id].currWater
+      });
     });
     setReadings(next);
+    onSave(updates);
   };
 
   const handleSubmit = () => {

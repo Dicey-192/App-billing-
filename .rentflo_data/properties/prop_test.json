@@ -1,0 +1,10 @@
+{
+  "id": "prop_test",
+  "name": "Patan Heritage",
+  "address": "Patan Durbar",
+  "electricRate": 14,
+  "waterRate": 250,
+  "createdAt": 1700000000000,
+  "updatedAt": 1700000000000,
+  "defaultExpenses": []
+}

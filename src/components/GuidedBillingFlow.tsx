@@ -177,10 +177,10 @@ export const GuidedBillingFlow: React.FC<GuidedBillingFlowProps> = ({
     setReadingsMap(prev => {
       const next = { ...prev };
       tenants.forEach(t => {
-        if (next[t.id] === undefined) {
+        if (!next[t.id] || (next[t.id].elec === '' && next[t.id].water === '')) {
           next[t.id] = {
-            elec: t.currElecReading ? String(t.currElecReading) : '',
-            water: t.currWaterReading ? String(t.currWaterReading) : ''
+            elec: t.currElecReading ? String(t.currElecReading) : (next[t.id]?.elec || ''),
+            water: t.currWaterReading ? String(t.currWaterReading) : (next[t.id]?.water || '')
           };
         }
       });
@@ -188,10 +188,14 @@ export const GuidedBillingFlow: React.FC<GuidedBillingFlowProps> = ({
     });
   }, [tenants]);
 
-  // Handle Reading Input Change (Manual numeric typing only!)
+  // Handle Reading Input Change (Manual numeric typing only!) - Saves immediately to permanent storage (Order 2)
   const handleReadingChange = (tenantId: string, field: 'elec' | 'water', value: string) => {
     // Only allow numbers and decimal
     const sanitized = value.replace(/[^0-9.]/g, '');
+    const currentR = readingsMap[tenantId] || { elec: '', water: '' };
+    const newElecStr = field === 'elec' ? sanitized : currentR.elec;
+    const newWaterStr = field === 'water' ? sanitized : currentR.water;
+
     setReadingsMap(prev => ({
       ...prev,
       [tenantId]: {
@@ -199,6 +203,18 @@ export const GuidedBillingFlow: React.FC<GuidedBillingFlowProps> = ({
         [field]: sanitized
       }
     }));
+
+    // Save automatically and immediately to permanent storage (Order 2)
+    const targetTenant = tenants.find(t => t.id === tenantId);
+    if (targetTenant) {
+      const elecVal = newElecStr !== '' && !isNaN(Number(newElecStr)) ? Number(newElecStr) : targetTenant.currElecReading;
+      const waterVal = newWaterStr !== '' && !isNaN(Number(newWaterStr)) ? Number(newWaterStr) : targetTenant.currWaterReading;
+      onSaveReadings([{
+        id: tenantId,
+        currElec: elecVal,
+        currWater: waterVal
+      }]);
+    }
   };
 
   // Calculate readiness status for all tenants
@@ -273,6 +289,8 @@ export const GuidedBillingFlow: React.FC<GuidedBillingFlowProps> = ({
     let matched = 0;
     const newMap = { ...readingsMap };
 
+    const updatesToPersist: { id: string; currElec: number; currWater: number }[] = [];
+
     for (const line of lines) {
       // Split by tab, comma, or pipe
       const tokens = line.split(/[\t,|]+/).map(t => t.trim()).filter(Boolean);
@@ -305,13 +323,21 @@ export const GuidedBillingFlow: React.FC<GuidedBillingFlowProps> = ({
           elec: numbers[0],
           water: numbers[1]
         };
+        updatesToPersist.push({
+          id: found.id,
+          currElec: Number(numbers[0]),
+          currWater: Number(numbers[1])
+        });
         matched++;
       }
     }
 
     setReadingsMap(newMap);
-    setPasteResultMsg(`Successfully matched and updated ${matched} tenant(s) from pasted data.`);
-    if (showToast) showToast(`Parsed readings for ${matched} tenant(s).`, 'success');
+    if (updatesToPersist.length > 0) {
+      onSaveReadings(updatesToPersist);
+    }
+    setPasteResultMsg(`Successfully matched and saved ${matched} tenant(s) to permanent storage.`);
+    if (showToast) showToast(`Parsed and saved readings for ${matched} tenant(s).`, 'success');
   };
 
   // Step 0: Perform Rollover

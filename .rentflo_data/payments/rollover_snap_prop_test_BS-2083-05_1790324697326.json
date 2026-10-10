@@ -1,0 +1,52 @@
+{
+  "id": "rollover_snap_prop_test_BS-2083-05_1790324697326",
+  "propertyId": "prop_test",
+  "month": "BS-2083-05",
+  "snapshot": {
+    "property": {
+      "id": "prop_test",
+      "name": "Patan Heritage",
+      "address": "Patan Durbar",
+      "electricRate": 14,
+      "waterRate": 250,
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000,
+      "defaultExpenses": []
+    },
+    "tenants": [
+      {
+        "id": "tenant_test",
+        "propertyId": "prop_test",
+        "name": "Bikash Gurung",
+        "roomNumber": "302",
+        "rent": 15000,
+        "previousDues": 3000,
+        "advancePayment": 1000,
+        "prevElecReading": 450,
+        "currElecReading": 510,
+        "prevWaterReading": 80,
+        "currWaterReading": 85,
+        "isPaid": false,
+        "paidAmount": 20000,
+        "payments": [
+          {
+            "id": "pay_test",
+            "amount": 5000,
+            "date": 1700000001000
+          },
+          {
+            "id": "51b8fbf5-3506-4943-a01b-514490f793cb",
+            "amount": 15000,
+            "date": 1790324633393,
+            "note": "Payment Received",
+            "remainingBalance": 0
+          }
+        ],
+        "expenses": [],
+        "updatedAt": 1790324633394,
+        "openingBalance": 3000
+      }
+    ]
+  },
+  "createdAt": 1790324697326
+}

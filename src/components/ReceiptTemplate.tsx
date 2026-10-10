@@ -78,8 +78,11 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
   const otherVal = billing.otherFees ?? 0;
   const additionalCharges = arrearsVal + otherVal;
 
-  // 5. Current Cycle Subtotal (Rent + Electricity + Water + Additional Charges / Arrears)
-  const currentSubtotal = rentVal + elecVal + waterVal + additionalCharges;
+  // 5. Advance / Prepaid Amount
+  const advanceVal = billing.advance ?? (tenant?.advancePayment || 0);
+
+  // Current Cycle Subtotal (Rent + Electricity + Water + Additional Charges / Arrears - Advance)
+  const currentSubtotal = rentVal + elecVal + waterVal + additionalCharges - advanceVal;
 
   // 6. Payment Received (direct permanent link to tenant's payments records)
   const paymentsArraySum = (Array.isArray(tenant?.payments) && tenant.payments.length > 0)
@@ -234,7 +237,23 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
           </span>
         </div>
 
-        {/* 5. Current Cycle Subtotal (smaller, thinner, secondary visual weight) */}
+        {/* 5. Advance / Prepaid Amount */}
+        <div className="flex justify-between items-center pb-2.5 border-b border-[#F1F5F9]">
+          <div>
+            <span className="text-[14px] font-bold text-[#000000]">
+              Advance / Prepaid Amount
+            </span>
+            <p className="text-[11px] text-[#64748B]">Prepaid balance deducted</p>
+          </div>
+          <span className={cn(
+            "text-[14px] font-bold font-mono",
+            advanceVal > 0 ? "text-emerald-600" : "text-[#000000]"
+          )}>
+            {advanceVal > 0 ? `-${formatRupee(advanceVal)}` : formatRupee(0)}
+          </span>
+        </div>
+
+        {/* 6. Current Cycle Subtotal (smaller, thinner, secondary visual weight) */}
         <div className="my-2 px-3 py-1.5 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0]/70 flex justify-between items-center">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
             CURRENT CYCLE SUBTOTAL
@@ -244,7 +263,7 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
           </span>
         </div>
 
-        {/* 6. Payment Received (or Payments Applied) */}
+        {/* 7. Payment Received (or Payments Applied) */}
         <div className="flex justify-between items-center pb-2.5 border-b border-[#F1F5F9]">
           <span className="text-[14px] font-bold text-[#000000]">
             Payment Received
@@ -260,7 +279,7 @@ export const ReceiptTemplate: React.FC<ReceiptTemplateProps> = ({ property, tena
           </span>
         </div>
 
-        {/* 7. Total Amount Due (Subtotal + Arrears – Payment Received) */}
+        {/* 8. Total Amount Due */}
         <div className="mt-3.5 p-3.5 sm:p-4 bg-[#EDF2F7] rounded-[14px] border border-[#CBD5E1]/60 flex justify-between items-center">
           <span className="text-[13px] font-extrabold uppercase tracking-wider text-[#000000]">
             TOTAL AMOUNT DUE

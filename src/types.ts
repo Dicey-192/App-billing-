@@ -18,6 +18,7 @@ export interface Property {
 
 export interface ManualOverrides {
   openingBalance?: number;
+  advanceAmount?: number;
   totalDue?: number;
   paidAmount?: number;
   isPaid?: boolean;
@@ -44,7 +45,8 @@ export interface Tenant {
   name: string;
   roomNumber: string;
   rent: number;
-  previousDues: number;
+  previousDues: number; // Arrears (money owed from previous cycles)
+  advancePayment?: number; // Advance (money paid extra / prepaid)
   prevElecReading: number;
   currElecReading: number;
   prevWaterReading: number;

@@ -1,0 +1,19 @@
+{
+  "id": "bill_test",
+  "propertyId": "prop_test",
+  "month": "BS-2083-04",
+  "snapshot": {
+    "property": {
+      "id": "prop_test",
+      "name": "Patan Heritage",
+      "address": "Patan Durbar",
+      "electricRate": 14,
+      "waterRate": 250,
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000,
+      "defaultExpenses": []
+    },
+    "tenants": []
+  },
+  "createdAt": 1700000003000
+}

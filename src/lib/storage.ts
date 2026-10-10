@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AppData, Property, Tenant, BillHistoryEntry, HistoryTenantSnapshot, SubscriptionPlan } from '../types';
 import { db } from './db';
-import { getIdbItem, setIdbItem, requestStoragePersistence } from './indexedDb';
+import { getIdbItem, setIdbItem, saveAppDataToIndexedDB, loadAppDataFromIndexedDB, requestStoragePersistence } from './indexedDb';
 
 const STORAGE_KEY = 'rentflo_billing_data';
 
@@ -105,16 +105,32 @@ export function normalizeAndValidateBackup(raw: any): AppData {
 }
 
 /**
- * Triple-redundant, synchronous and asynchronous permanent storage.
- * Saves immediately to localStorage (multiple keys), IndexedDB, BackendDB, and Server disk.
+ * Multi-layer permanent storage on device (Order 1, Order 2, Order 4).
+ * Saves immediately to localStorage (multiple keys), IndexedDB (local DB), BackendDB, and Server disk.
+ * Includes overwrite protection: never overwrites real saved data with empty data.
  */
-export function persistEverywhere(appData: AppData): AppData {
+export function persistEverywhere(appData: AppData, forceEmpty: boolean = false): AppData {
+  if (!appData || typeof appData !== 'object') return appData;
+
   const now = Date.now();
   const stampedData: AppData = {
     ...appData,
     _timestamp: now,
     _lastSavedAt: now,
   };
+
+  const incomingProps = Array.isArray(stampedData.properties) ? stampedData.properties.length : 0;
+  const incomingTenants = Array.isArray(stampedData.tenants) ? stampedData.tenants.length : 0;
+
+  // Order 4: Overwrite Protection
+  // If attempting to save empty data (0 properties and 0 tenants), check if existing storage has real data
+  if (incomingProps === 0 && incomingTenants === 0 && !forceEmpty) {
+    const existing = loadDirectFromLocalStorage();
+    if (existing && ((existing.properties?.length || 0) > 0 || (existing.tenants?.length || 0) > 0)) {
+      console.warn('[persistEverywhere] PROTECTED: Blocked attempt to overwrite real saved data with empty data.');
+      return existing;
+    }
+  }
 
   // 1. Synchronous localStorage writes to all key variants
   try {
@@ -143,23 +159,23 @@ export function persistEverywhere(appData: AppData): AppData {
     console.error('[useStorage] Synchronous localStorage write error:', err);
   }
 
-  // 2. Persistent IndexedDB write
-  setIdbItem(STORAGE_KEY, stampedData).catch(err => {
+  // 2. Persistent IndexedDB write with backup & safety check
+  saveAppDataToIndexedDB(stampedData, forceEmpty).catch(err => {
     console.warn('[useStorage] IndexedDB save error:', err);
   });
-  setIdbItem('rentflo_billing_data', stampedData).catch(() => {});
 
   // 3. BackendDB in-memory & fallback write
   db.set(STORAGE_KEY, stampedData).catch(err => {
     console.warn('[useStorage] BackendDB set error:', err);
   });
 
-  // 4. Server disk sync non-blocking
+  // 4. Server disk sync non-blocking with protection and keepalive
   try {
     fetch('/api/local-storage/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: stampedData })
+      body: JSON.stringify({ data: stampedData, forceOverwriteEmpty: forceEmpty }),
+      keepalive: true
     }).catch(err => {
       console.warn('[useStorage] Server disk save non-blocking warning:', err);
     });
@@ -364,83 +380,114 @@ export function useStorage() {
   // 1. Initial State: Load immediately & synchronously from localStorage on first frame
   const [data, setData] = useState<AppData>(() => {
     const direct = loadDirectFromLocalStorage();
-    if (direct) {
+    if (direct && ((direct.properties?.length || 0) > 0 || (direct.tenants?.length || 0) > 0)) {
       return direct;
     }
-    return INITIAL_DATA;
+    return direct || INITIAL_DATA;
   });
 
   const latestDataRef = useRef<AppData>(data);
   latestDataRef.current = data;
+  const isHydratedRef = useRef<boolean>(false);
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    const direct = loadDirectFromLocalStorage();
+    return !(direct && ((direct.properties?.length || 0) > 0 || (direct.tenants?.length || 0) > 0));
+  });
   const [quotaUsage, setQuotaUsage] = useState(0);
   const [dataStats, setDataStats] = useState({ properties: 0, tenants: 0, history: 0 });
 
   // Central commit pipeline: ensures EVERY mutation is saved immediately to all storage layers
-  const commitData = useCallback((nextData: AppData): AppData => {
+  const commitData = useCallback((nextData: AppData, forceEmpty: boolean = false): AppData => {
     const recalculated = performRecalculation(nextData);
-    const persisted = persistEverywhere(recalculated);
+    const persisted = persistEverywhere(recalculated, forceEmpty);
     latestDataRef.current = persisted;
     setData(persisted);
     return persisted;
   }, []);
 
-  // On mount: check IndexedDB, request persistent storage, sync with server
+  // Order 3: Load data when app starts from permanent device database (IndexedDB + Disk + localStorage)
   useEffect(() => {
-    setIsLoading(false);
     requestStoragePersistence();
 
-    // 1. Check IndexedDB
-    getIdbItem<AppData>(STORAGE_KEY).then(idbData => {
-      if (idbData && (idbData.properties?.length || idbData.tenants?.length)) {
-        const idbNormalized = normalizeAndValidateBackup(idbData);
-        const idbTs = idbNormalized._timestamp || idbNormalized._lastSavedAt || 0;
-        const currentTs = latestDataRef.current._timestamp || latestDataRef.current._lastSavedAt || 0;
-        if (idbTs > currentTs || latestDataRef.current.properties.length === 0) {
-          console.log('[useStorage] Hydrated richer data from persistent IndexedDB');
-          commitData(idbNormalized);
+    async function hydrateFromPermanentStorage() {
+      try {
+        // Query IndexedDB (Device Database) on the user's device
+        const idbRaw = await loadAppDataFromIndexedDB();
+
+        let bestCandidate: AppData | null = null;
+        let bestTs = 0;
+        let bestItemCount = 0;
+
+        // 1. Current in-memory / localStorage state on this device
+        const current = latestDataRef.current;
+        const currentCount = (current.properties?.length || 0) + (current.tenants?.length || 0);
+        if (currentCount > 0) {
+          bestCandidate = current;
+          bestTs = current._timestamp || current._lastSavedAt || 0;
+          bestItemCount = currentCount;
         }
-      }
-    }).catch(err => {
-      console.warn('[useStorage] IndexedDB mount check fallback:', err);
-    });
 
-    // 2. Check Server Local Storage Folder
-    fetch('/api/local-storage/load')
-      .then(res => res.json())
-      .then(payload => {
-        if (payload?.success && payload?.data) {
-          const diskData = normalizeAndValidateBackup(payload.data);
-          const serverTs = diskData._timestamp || diskData._lastSavedAt || payload.lastUpdated || 0;
-          const current = latestDataRef.current;
-          const currentTs = current._timestamp || current._lastSavedAt || 0;
-          const hasLocal = current.properties.length > 0 || current.tenants.length > 0;
-
-          // If local device data is newer or has modifications since server last updated:
-          if (hasLocal && currentTs >= serverTs) {
-            console.log('[useStorage] Device local storage is newer than server disk, updating server disk.');
-            fetch('/api/local-storage/save', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: current })
-            }).catch(() => {});
-          } else if (serverTs > currentTs && currentTs > 0) {
-            console.log('[useStorage] Server disk has newer data, updating device.');
-            commitData(diskData);
-          } else if (!hasLocal && (diskData.properties.length > 0 || diskData.tenants.length > 0)) {
-            console.log('[useStorage] Device local storage is empty, bootstrapping from server disk.');
-            commitData(diskData);
+        // 2. Check IndexedDB on this device
+        if (idbRaw) {
+          const idbData = normalizeAndValidateBackup(idbRaw);
+          const idbCount = (idbData.properties?.length || 0) + (idbData.tenants?.length || 0);
+          const idbTs = idbData._timestamp || idbData._lastSavedAt || 0;
+          if (idbCount > 0) {
+            const idbHistoryCount = idbData.history?.length || 0;
+            const curHistoryCount = bestCandidate?.history?.length || 0;
+            if (!bestCandidate || idbTs > bestTs || (idbTs === bestTs && idbHistoryCount >= curHistoryCount)) {
+              bestCandidate = idbData;
+              bestTs = idbTs;
+              bestItemCount = idbCount;
+            }
           }
         }
-      })
-      .catch(err => {
-        console.warn('[useStorage] Initial local folder load fallback:', err);
-      });
+
+        const hasDeviceData = bestCandidate && bestItemCount > 0;
+
+        // Order 3 & Order 5:
+        // If device has real data in IndexedDB or localStorage, that is the authoritative permanent data.
+        // NEVER overwrite device data with old/previous-month server data!
+        if (hasDeviceData) {
+          console.log(`[useStorage] Loaded from permanent device storage (${bestCandidate.properties.length} properties, ${bestCandidate.tenants.length} tenants, ${bestCandidate.history?.length || 0} bills, cycle: ${bestCandidate.activeMonth || 'Current'}).`);
+          const recalculated = performRecalculation(bestCandidate);
+          persistEverywhere(recalculated);
+          latestDataRef.current = recalculated;
+          setData(recalculated);
+        } else {
+          // Device has no local data yet (first-time launch on this device).
+          // Only in this case do we bootstrap from Server Disk if available.
+          try {
+            const serverRes = await fetch('/api/local-storage/load').then(r => r.json());
+            if (serverRes?.success && serverRes?.data) {
+              const diskData = normalizeAndValidateBackup(serverRes.data);
+              const diskCount = (diskData.properties?.length || 0) + (diskData.tenants?.length || 0);
+              if (diskCount > 0) {
+                console.log(`[useStorage] Fresh device launch: Bootstrapping from server disk (${diskData.properties.length} props, ${diskData.tenants.length} tenants).`);
+                const recalculated = performRecalculation(diskData);
+                persistEverywhere(recalculated);
+                latestDataRef.current = recalculated;
+                setData(recalculated);
+              }
+            }
+          } catch (e) {
+            console.warn('[useStorage] Server bootstrap fallback error:', e);
+          }
+        }
+      } catch (err) {
+        console.warn('[useStorage] Hydration error:', err);
+      } finally {
+        isHydratedRef.current = true;
+        setIsLoading(false);
+      }
+    }
+
+    hydrateFromPermanentStorage();
 
     // 3. Register mobile and browser flush listeners
     const handleImmediateFlush = () => {
-      if (latestDataRef.current) {
+      if (latestDataRef.current && isHydratedRef.current) {
         persistEverywhere(latestDataRef.current);
       }
     };
@@ -461,7 +508,7 @@ export function useStorage() {
       window.removeEventListener('freeze', handleImmediateFlush);
       document.removeEventListener('visibilitychange', handleVisChange);
     };
-  }, [commitData]);
+  }, []);
 
   // Compute stats on data changes
   useEffect(() => {

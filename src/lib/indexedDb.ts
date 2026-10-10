@@ -160,3 +160,62 @@ export async function deleteIdbItem(key: string): Promise<void> {
     // Non-blocking catch
   }
 }
+
+const PRIMARY_DB_KEY = 'rentflo_billing_data';
+const BACKUP_DB_KEY = 'rentflo_billing_data_backup';
+
+/**
+ * High-level permanent database save with overwrite protection.
+ * Automatically saves primary and redundant backup snapshot into IndexedDB.
+ */
+export async function saveAppDataToIndexedDB(data: any, forceEmpty: boolean = false): Promise<boolean> {
+  if (!data || typeof data !== 'object') return false;
+
+  const incomingProps = Array.isArray(data.properties) ? data.properties.length : 0;
+  const incomingTenants = Array.isArray(data.tenants) ? data.tenants.length : 0;
+
+  // Overwrite safety check: Never replace meaningful data with empty data
+  if (incomingProps === 0 && incomingTenants === 0 && !forceEmpty) {
+    const existing = await getIdbItem(PRIMARY_DB_KEY);
+    if (existing && ((existing.properties?.length || 0) > 0 || (existing.tenants?.length || 0) > 0)) {
+      console.warn('[IndexedDB] Blocked attempt to overwrite non-empty IndexedDB with empty data.');
+      return false;
+    }
+  }
+
+  try {
+    await setIdbItem(PRIMARY_DB_KEY, data);
+    if (incomingProps > 0 || incomingTenants > 0) {
+      // Keep secondary backup in IndexedDB
+      await setIdbItem(BACKUP_DB_KEY, data);
+    }
+    return true;
+  } catch (err) {
+    console.error('[IndexedDB] saveAppDataToIndexedDB error:', err);
+    return false;
+  }
+}
+
+/**
+ * High-level permanent database loader.
+ * Checks primary key, then backup key.
+ */
+export async function loadAppDataFromIndexedDB(): Promise<any | null> {
+  try {
+    const primary = await getIdbItem(PRIMARY_DB_KEY);
+    if (primary && ((primary.properties?.length || 0) > 0 || (primary.tenants?.length || 0) > 0)) {
+      return primary;
+    }
+
+    const backup = await getIdbItem(BACKUP_DB_KEY);
+    if (backup && ((backup.properties?.length || 0) > 0 || (backup.tenants?.length || 0) > 0)) {
+      return backup;
+    }
+
+    return primary || null;
+  } catch (err) {
+    console.warn('[IndexedDB] loadAppDataFromIndexedDB error:', err);
+    return null;
+  }
+}
+

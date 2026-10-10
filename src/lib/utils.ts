@@ -41,11 +41,20 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
   const defaultOtherFees = (tenant.expenses || []).reduce((acc, exp) => acc + exp.amount, 0);
   const otherFees = tenant.manualOverrides?.otherFees !== undefined ? tenant.manualOverrides.otherFees : defaultOtherFees;
   
-  const openingBalance = tenant.manualOverrides?.openingBalance !== undefined ? tenant.manualOverrides.openingBalance : (tenant.previousDues ?? 0);
-  
-  const totalDue = tenant.manualOverrides?.totalDue !== undefined ? tenant.manualOverrides.totalDue : (baseRent + electricityCharges + waterCharges + otherFees + openingBalance);
-  
-  // Resolve paid amount prioritizing overrides, recorded payments, and stored paidAmount
+  // 4. + Arrears (money owed from previous months)
+  const arrears = tenant.manualOverrides?.openingBalance !== undefined 
+    ? tenant.manualOverrides.openingBalance 
+    : (Number(tenant.previousDues) || 0);
+
+  // 5. - Advance (money paid extra / prepaid in advance)
+  const advance = tenant.manualOverrides?.advanceAmount !== undefined 
+    ? tenant.manualOverrides.advanceAmount 
+    : (Number(tenant.advancePayment) || 0);
+
+  // Gross Subtotal: Rent + Electricity + Water + Other Fees + Arrears - Advance
+  const grossSubtotal = baseRent + electricityCharges + waterCharges + otherFees + arrears - advance;
+
+  // Resolve 6. - Payments Received this cycle
   const paymentsArraySum = (Array.isArray(tenant.payments) && tenant.payments.length > 0)
     ? tenant.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
     : 0;
@@ -54,21 +63,36 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
 
   let paidAmount = Math.max(paymentsArraySum, directPaid, overridePaid);
   if (paidAmount === 0 && tenant.isPaid) {
-    paidAmount = totalDue;
+    paidAmount = Math.max(0, grossSubtotal);
   }
 
-  // Outstanding balance (never negative unless landlord credit)
-  const outstandingBalance = Math.max(0, totalDue - paidAmount);
+  // 7. = Total Amount Due
+  // If manual override for totalDue is provided, respect it; otherwise: grossSubtotal - paidAmount
+  const netDueBeforeFloor = grossSubtotal - paidAmount;
+  const totalDue = tenant.manualOverrides?.totalDue !== undefined 
+    ? tenant.manualOverrides.totalDue 
+    : Math.max(0, netDueBeforeFloor);
+
+  // Remaining excess credit/advance if payments + previous advance exceed total charges
+  const excessAdvance = netDueBeforeFloor < 0 ? Math.abs(netDueBeforeFloor) : 0;
+
+  // Outstanding balance to be settled
+  const outstandingBalance = totalDue;
   
   return {
     baseRent,
     electricityCharges,
     waterCharges,
     otherFees,
-    openingBalance,
+    openingBalance: arrears,
+    arrears,
+    advance,
+    advancePayment: advance,
+    grossSubtotal,
     totalDue,
     paidAmount,
     outstandingBalance,
+    excessAdvance,
     defaultElecCharges,
     defaultWaterCharges,
     defaultOtherFees,

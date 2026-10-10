@@ -535,9 +535,16 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
               )}
 
               {viewingBilling.openingBalance > 0 && (
-                <div className="flex justify-between items-center text-xs p-3 bg-rose-500/10 rounded-xl border border-rose-500/20 font-bold">
-                  <span className="text-rose-400">Opening Arrears (Previous Balance)</span>
-                  <span className="font-mono text-rose-400">{formatCurrency(viewingBilling.openingBalance)}</span>
+                <div className="flex justify-between items-center text-xs p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 font-bold">
+                  <span className="text-amber-400">Opening Arrears (Previous Dues)</span>
+                  <span className="font-mono text-amber-400">+{formatCurrency(viewingBilling.openingBalance)}</span>
+                </div>
+              )}
+
+              {viewingBilling.advance > 0 && (
+                <div className="flex justify-between items-center text-xs p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 font-bold">
+                  <span className="text-emerald-400">Advance / Prepaid Amount (Deducted)</span>
+                  <span className="font-mono text-emerald-400">-{formatCurrency(viewingBilling.advance)}</span>
                 </div>
               )}
 
