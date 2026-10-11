@@ -54,6 +54,11 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
   // Gross Subtotal: Rent + Electricity + Water + Other Fees + Arrears - Advance
   const grossSubtotal = baseRent + electricityCharges + waterCharges + otherFees + arrears - advance;
 
+  // Order 3: Outstanding amount itself includes arrears + current bill – previous advances
+  const outstanding = tenant.manualOverrides?.totalDue !== undefined 
+    ? tenant.manualOverrides.totalDue 
+    : Math.max(0, grossSubtotal);
+
   // Resolve 6. - Payments Received this cycle
   const paymentsArraySum = (Array.isArray(tenant.payments) && tenant.payments.length > 0)
     ? tenant.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
@@ -63,22 +68,17 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
 
   let paidAmount = Math.max(paymentsArraySum, directPaid, overridePaid);
   if (paidAmount === 0 && tenant.isPaid) {
-    paidAmount = Math.max(0, grossSubtotal);
+    paidAmount = Math.max(0, outstanding);
   }
 
-  // 7. = Total Amount Due
-  // If manual override for totalDue is provided, respect it; otherwise: grossSubtotal - paidAmount
-  const netDueBeforeFloor = grossSubtotal - paidAmount;
-  const totalDue = tenant.manualOverrides?.totalDue !== undefined 
-    ? tenant.manualOverrides.totalDue 
-    : Math.max(0, netDueBeforeFloor);
+  // Correct formula (Locked): Remaining = Outstanding – Paid
+  const netRemaining = outstanding - paidAmount;
+  const remaining = Math.max(0, netRemaining);
 
-  // Remaining excess credit/advance if payments + previous advance exceed total charges
-  const excessAdvance = netDueBeforeFloor < 0 ? Math.abs(netDueBeforeFloor) : 0;
+  // Remaining excess credit/advance if payments exceed total charges
+  const excessAdvance = netRemaining < 0 ? Math.abs(netRemaining) : 0;
+  const isPaid = remaining <= 0;
 
-  // Outstanding balance to be settled
-  const outstandingBalance = totalDue;
-  
   return {
     baseRent,
     electricityCharges,
@@ -89,10 +89,13 @@ export function getTenantBillingDetails(tenant: Tenant, property: Property) {
     advance,
     advancePayment: advance,
     grossSubtotal,
-    totalDue,
-    paidAmount,
-    outstandingBalance,
+    outstanding,                   // Gross Outstanding (arrears + current bill - previous advances)
+    totalDue: outstanding,         // Total Period Billing (Outstanding)
+    paidAmount,                    // Total Paid this cycle
+    remaining,                     // Locked formula: Remaining = Outstanding - Paid
+    outstandingBalance: remaining, // Amount remaining to be settled (Remaining)
     excessAdvance,
+    isPaid,
     defaultElecCharges,
     defaultWaterCharges,
     defaultOtherFees,

@@ -3617,20 +3617,20 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
                 const isSelected = selectedTenantIds.has(t.id);
                 const isFocused = activeTenant?.id === t.id;
 
-                const outstanding = detail.totalDue - (t.paidAmount || 0);
+                const remaining = detail.remaining !== undefined ? detail.remaining : Math.max(0, detail.totalDue - (t.paidAmount || 0));
 
                 // Status Badge Logic: Paid | Partial | Overdue
                 let status = "Overdue";
                 let statusClass = "bg-rose-500/10 text-rose-600 border border-rose-500/10";
-                if (t.isPaid || outstanding <= 0) {
+                if (t.isPaid || remaining <= 0) {
                   status = "Paid";
                   statusClass = "bg-emerald-500/10 text-emerald-600 border border-[#76FF03]/20";
-                } else if (t.paidAmount > 0) {
+                } else if ((t.paidAmount || 0) > 0 || (detail.paidAmount || 0) > 0) {
                   status = "Partial";
                   statusClass = "bg-amber-500/10 text-amber-600 border border-amber-500/15";
                 }
 
-                const dueColor = outstanding <= 0 ? "text-emerald-500" : "text-rose-600";
+                const dueColor = remaining <= 0 ? "text-emerald-500" : "text-rose-600";
                 const initials = t.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
 
                 return (
@@ -3685,8 +3685,8 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
                         <span className={cn("px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider", statusClass)}>
                           {status}
                         </span>
-                        <span className={cn("font-mono font-black text-xs tracking-tight", isFocused ? dueColor : outstanding <= 0 ? "text-emerald-400" : "text-rose-500")}>
-                          {formatCurrency(outstanding)}
+                        <span className={cn("font-mono font-black text-xs tracking-tight", isFocused ? dueColor : remaining <= 0 ? "text-emerald-400" : "text-rose-500")}>
+                          {formatCurrency(remaining)}
                         </span>
                       </div>
                     </div>
@@ -3763,8 +3763,8 @@ function _DeprecatedTenantsView({ tenants, properties, selectedPropertyId, setSe
                    const prop = properties.find((p: any) => p.id === t.propertyId)!;
                    if (!prop) return acc;
                    const detail = getTenantBillingDetails(t, prop);
-                   const outstanding = detail.totalDue - (t.paidAmount || 0);
-                   return acc + (outstanding > 0 ? outstanding : 0);
+                   const rem = detail.remaining !== undefined ? detail.remaining : Math.max(0, detail.outstanding - (t.paidAmount || 0));
+                   return acc + (rem > 0 ? rem : 0);
                 }, 0))}
               </span>
             </div>

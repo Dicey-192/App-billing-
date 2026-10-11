@@ -243,24 +243,26 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
 
   // Quick chips count computation
   const quickChipCounts = useMemo(() => {
-    let overdue = 0;
-    let paid = 0;
-    let highArrears = 0;
+    let overdueCount = 0;
+    let paidCount = 0;
+    let highArrearsCount = 0;
 
     tenants.forEach(t => {
       const p = properties.find(prop => prop.id === t.propertyId);
       const b = p ? getTenantBillingDetails(t, p) : null;
-      const outstanding = b ? b.outstandingBalance : (t.rent - (t.paidAmount || 0));
-      if (outstanding > 0) overdue++;
-      if (outstanding <= 0) paid++;
-      if (outstanding >= 5000 || (t.rent > 0 && outstanding > t.rent)) highArrears++;
+      const outstanding = b ? (b.outstanding || b.totalDue) : t.rent;
+      const paidAmt = b ? b.paidAmount : (t.paidAmount || 0);
+      const remaining = Math.max(0, outstanding - paidAmt);
+      if (remaining > 0) overdueCount++;
+      if (remaining <= 0) paidCount++;
+      if (remaining >= 5000 || (t.rent > 0 && remaining > t.rent)) highArrearsCount++;
     });
 
     return {
       all: tenants.length,
-      overdue,
-      paid,
-      highArrears,
+      overdue: overdueCount,
+      paid: paidCount,
+      highArrears: highArrearsCount,
       thisCycle: tenants.length
     };
   }, [tenants, properties]);
@@ -281,38 +283,15 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
       
       const matchProperty = selectedPropertyId === 'all' || !selectedPropertyId || t.propertyId === selectedPropertyId;
       
-      // Compute outstanding for status filtering
+      // Order 1 & 3: Compute Outstanding and Remaining (Remaining = Outstanding - Paid)
       const p = properties.find(prop => prop.id === t.propertyId);
-      const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
-      const prevElec = t.prevElecReading;
-      const currElec = t.currElecReading;
-      const elecRate = p?.electricRate || 0;
-      const elecCharges = t.manualOverrides?.electricityCharges !== undefined 
-        ? t.manualOverrides.electricityCharges 
-        : Math.max(0, currElec - prevElec) * elecRate;
-
-      const prevWater = t.prevWaterReading;
-      const currWater = t.currWaterReading;
-      const waterRate = p?.waterRate || 0;
-      const waterCharges = t.manualOverrides?.waterCharges !== undefined 
-        ? t.manualOverrides.waterCharges 
-        : Math.max(0, currWater - prevWater) * waterRate;
-
-      const otherFees = t.manualOverrides?.otherFees !== undefined 
-        ? t.manualOverrides.otherFees 
-        : (t.expenses || []).reduce((sum, e) => sum + e.amount, 0);
-
-      const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
+      const b = p ? getTenantBillingDetails(t, p) : null;
+      const outstanding = b ? (b.outstanding || b.totalDue) : (t.manualOverrides?.totalDue !== undefined ? t.manualOverrides.totalDue : t.rent);
+      const paid = b ? b.paidAmount : (t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0));
+      const remaining = Math.max(0, outstanding - paid);
       
-      const totalDue = t.manualOverrides?.totalDue !== undefined 
-        ? t.manualOverrides.totalDue 
-        : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
-
-      const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
-      const outstanding = totalDue - paid;
-      
-      const isOverdue = outstanding > 0;
-      const isHighArrears = outstanding >= 5000 || (t.rent > 0 && outstanding > t.rent);
+      const isOverdue = remaining > 0;
+      const isHighArrears = remaining >= 5000 || (t.rent > 0 && remaining > t.rent);
 
       let matchesStatus = true;
       if (statusFilter === 'paid') {
@@ -945,24 +924,28 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
           filteredTenants.map((t) => {
             const isSelected = selectedTenantIds.has(t.id);
             const prop = properties.find(p => p.id === t.propertyId);
-            const b = prop ? getTenantBillingDetails(t, prop) : {
-              baseRent: t.rent,
-              totalDue: t.rent,
-              paidAmount: t.paidAmount || 0,
-              outstandingBalance: Math.max(0, t.rent - (t.paidAmount || 0)),
-              isPaid: (t.paidAmount || 0) >= t.rent
-            };
-            const outstanding = b.outstandingBalance;
-            const paidAmount = b.paidAmount || 0;
-            const totalDue = b.totalDue || 1;
-            const isPaid = outstanding <= 0;
+            const b = prop ? getTenantBillingDetails(t, prop) : null;
+            
+            // Order 3: Outstanding includes arrears + current bill - previous advances
+            const outstanding = b 
+              ? (b.outstanding || b.totalDue) 
+              : (t.manualOverrides?.totalDue !== undefined ? t.manualOverrides.totalDue : t.rent);
+            
+            const paidAmount = b 
+              ? b.paidAmount 
+              : (t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0));
+            
+            // Order 1 & Locked formula: Remaining = Outstanding – Paid
+            const remaining = Math.max(0, outstanding - paidAmount);
+            
+            const isPaid = remaining <= 0;
             const isPartial = !isPaid && paidAmount > 0;
             const isOverdue = !isPaid && paidAmount === 0;
-            const isHighArrears = outstanding >= 5000 || (t.rent > 0 && outstanding > t.rent);
+            const isHighArrears = remaining >= 5000 || (t.rent > 0 && remaining > t.rent);
             const initials = t.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
 
             // Progress bar calculations
-            const progressPercent = Math.min(100, Math.max(0, Math.round((paidAmount / totalDue) * 100)));
+            const progressPercent = outstanding > 0 ? Math.min(100, Math.max(0, Math.round((paidAmount / outstanding) * 100))) : (isPaid ? 100 : 0);
 
             return (
               <div
@@ -1014,15 +997,17 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Right side: 18px Bold Arrears amount + 12px Regular off-white (#9CA3AF) label */}
+                  {/* Right side: 18px Bold Outstanding amount + 12px Regular off-white (#9CA3AF) label */}
                   <div className="text-right shrink-0">
                     <span className="text-xs text-[#9CA3AF] font-medium block">
-                      {isPaid ? "Balance" : "Outstanding"}
+                      {isPaid ? "Settled" : "Outstanding"}
                     </span>
                     <span className={cn(
                       "text-lg font-bold font-mono tracking-tight",
                       isPaid
                         ? "text-emerald-400"
+                        : isPartial
+                        ? "text-amber-400"
                         : "text-red-500"
                     )}>
                       {formatCurrency(outstanding)}
@@ -1043,7 +1028,12 @@ export const TenantsView: React.FC<TenantsViewProps> = ({
                   </div>
                   <div className="flex justify-between items-center text-xs font-mono text-[#9CA3AF]">
                     <span>Paid: {formatCurrency(paidAmount)}</span>
-                    <span>Remaining: {formatCurrency(outstanding)}</span>
+                    <span className={cn(
+                      "font-bold",
+                      remaining === 0 ? "text-emerald-400" : isPartial ? "text-amber-400" : "text-rose-400"
+                    )}>
+                      Remaining: {formatCurrency(remaining)}
+                    </span>
                   </div>
                 </div>
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Property, Tenant, BillHistoryEntry } from '../types';
-import { formatMonthStr, formatCurrency } from '../lib/utils';
+import { formatMonthStr, formatCurrency, getTenantBillingDetails } from '../lib/utils';
 import { 
   TrendingUp, Users, Home, ShieldAlert, CheckCircle2, 
   ArrowUpRight, DollarSign, Wallet, Percent, UserCheck, 
@@ -56,33 +56,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
     // Outstanding Due calculation
     tenants.forEach(t => {
-      const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
-      const prevElec = t.prevElecReading;
-      const currElec = t.currElecReading;
-      const elecRate = properties.find(p => p.id === t.propertyId)?.electricRate || 0;
-      const elecCharges = t.manualOverrides?.electricityCharges !== undefined 
-        ? t.manualOverrides.electricityCharges 
-        : Math.max(0, currElec - prevElec) * elecRate;
-
-      const prevWater = t.prevWaterReading;
-      const currWater = t.currWaterReading;
-      const waterRate = properties.find(p => p.id === t.propertyId)?.waterRate || 0;
-      const waterCharges = t.manualOverrides?.waterCharges !== undefined 
-        ? t.manualOverrides.waterCharges 
-        : Math.max(0, currWater - prevWater) * waterRate;
-
-      const otherFees = t.manualOverrides?.otherFees !== undefined 
-        ? t.manualOverrides.otherFees 
-        : (t.expenses || []).reduce((sum, e) => sum + e.amount, 0);
-
-      const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
-      
-      const totalDue = t.manualOverrides?.totalDue !== undefined 
-        ? t.manualOverrides.totalDue 
-        : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
-
-      const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
-      const remaining = Math.max(0, totalDue - paid);
+      const prop = properties.find(p => p.id === t.propertyId);
+      const b = prop ? getTenantBillingDetails(t, prop) : null;
+      const remaining = b ? b.remaining : Math.max(0, (t.manualOverrides?.totalDue ?? t.rent) - (t.paidAmount || 0));
       outstandingDue += remaining;
     });
 
@@ -160,39 +136,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const topOutstandingTenants = useMemo(() => {
     return tenants
       .map(t => {
-        const baseRent = t.manualOverrides?.baseRent !== undefined ? t.manualOverrides.baseRent : t.rent;
-        const prevElec = t.prevElecReading;
-        const currElec = t.currElecReading;
-        const elecRate = properties.find(p => p.id === t.propertyId)?.electricRate || 0;
-        const elecCharges = t.manualOverrides?.electricityCharges !== undefined 
-          ? t.manualOverrides.electricityCharges 
-          : Math.max(0, currElec - prevElec) * elecRate;
-
-        const prevWater = t.prevWaterReading;
-        const currWater = t.currWaterReading;
-        const waterRate = properties.find(p => p.id === t.propertyId)?.waterRate || 0;
-        const waterCharges = t.manualOverrides?.waterCharges !== undefined 
-          ? t.manualOverrides.waterCharges 
-          : Math.max(0, currWater - prevWater) * waterRate;
-
-        const otherFees = t.manualOverrides?.otherFees !== undefined 
-          ? t.manualOverrides.otherFees 
-          : (t.expenses || []).reduce((sum, e) => sum + e.amount, 0);
-
-        const openingBal = t.manualOverrides?.openingBalance !== undefined ? t.manualOverrides.openingBalance : t.previousDues;
-        
-        const totalDue = t.manualOverrides?.totalDue !== undefined 
-          ? t.manualOverrides.totalDue 
-          : (baseRent + elecCharges + waterCharges + otherFees + openingBal);
-
-        const paid = t.manualOverrides?.paidAmount !== undefined ? t.manualOverrides.paidAmount : (t.paidAmount || 0);
-        const remaining = Math.max(0, totalDue - paid);
+        const prop = properties.find(p => p.id === t.propertyId);
+        const b = prop ? getTenantBillingDetails(t, prop) : null;
+        const outstanding = b ? (b.outstanding || b.totalDue) : t.rent;
+        const paid = b ? b.paidAmount : (t.paidAmount || 0);
+        const remaining = Math.max(0, outstanding - paid);
 
         return {
           ...t,
           outstanding: remaining,
           room: t.roomNumber,
-          propertyName: properties.find(p => p.id === t.propertyId)?.name || 'Default Property'
+          propertyName: prop?.name || 'Default Property'
         };
       })
       .filter(t => t.outstanding > 0)
